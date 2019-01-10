@@ -1,18 +1,5 @@
-# dnc
-
-DNC: Char-level prediction with gradient check (NUMPY)
-
-# RNN code based on original work by A.Karpathy (min-char-rnn.py)
-
-https://gist.github.com/karpathy/d4dee566867f8291f086
-
-* RNN version still depends only on numpy
-* Added batching
-* Modified RNN into an LSTM
-* Implemented Differentiable Neural Computer https://www.nature.com/articles/nature20101 as close as possible to the description in the paper
-### Implemented: LSTM-controller, 2D memory array, content-addressable read/write
-### Issues: softmax on key similarity causes crashes (divide by 0) - if you experience this, need to restart
-### TODO: dynamic memory allocation/free, faster implementation (PyTorch?), saving the model
+# Differentiable Neural Computer
+Implementation of Differentiable Neural Computer https://www.nature.com/articles/nature20101 as close as possible to the description in the paper. Task: char-level prediction. The repo also includes simple RNN (rnn-numpy.py) and LSTM (lstm-numpy.py). Some external data (ptb, wiki) needs to be downloaded separately.
 
 ### quick start
 ```
@@ -21,6 +8,19 @@ python lstm-numpy.py
 python dnc-numpy.py
 ```
 
+#### Credits
+RNN code based on original work by A.Karpathy (min-char-rnn.py)
+https://gist.github.com/karpathy/d4dee566867f8291f086
+
+### Features
+* RNN version still depends only on numpy
+* Added batching
+* Modified RNN into an LSTM
+* Includes gradient check
+
+### Implemented: LSTM-controller, 2D memory array, content-addressable read/write
+### Issues: softmax on key similarity causes crashes (divide by 0) - if you experience this, need to restart
+### TODO: dynamic memory allocation/free, faster implementation (PyTorch?), saving the model, sample
 
 ### Sample output:
 
@@ -29,7 +29,7 @@ Time, iteration, BPC (prediction error -> bits per character, lower is better), 
   0: 4163.009 s, iter 104800, 1.2808 BPC, 1488.38 char/s
 ```
 
-### sample from the model:
+### sample from the model (alice29.txt):
 ```
  e garden as she very dunced.
                   
