@@ -18,9 +18,18 @@ https://gist.github.com/karpathy/d4dee566867f8291f086
 * Modified RNN into an LSTM
 * Includes gradient check
 
-### Implemented: LSTM-controller, 2D memory array, content-addressable read/write
-### Issues: softmax on key similarity causes crashes (divide by 0) - if you experience this, need to restart
-### TODO: dynamic memory allocation/free, faster implementation (PyTorch?), saving the model, sample
+### DNC
+###### Implemented
+* LSTM-controller
+* 2D memory array
+* content-addressable read/write
+###### Issues
+* softmax on key similarity causes crashes (divide by 0) - if you experience this, need to restart
+###### TODO
+* dynamic memory allocation/free
+* faster implementation (PyTorch?)
+* saving the model
+* sample
 
 ### Sample output:
 
