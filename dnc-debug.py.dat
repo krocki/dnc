@@ -1,0 +1,3 @@
+# ('2019-01-09 21:00:59', 'dnc-debug.py', Namespace(batchsize=8, check_interval=200, fname='./dnc-debug.py.dat', fp64=True, gradcheck=True, hidden=100, sample_length=1000, seqlength=15, timelimit=10000))
+#  ITER		TIME		TRAIN LOSS
+  200		15.625684	4.187410

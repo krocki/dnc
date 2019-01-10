@@ -34,7 +34,7 @@ MW = 10 # memory entry width (paper - W)
 MN = 5 # number of memory locations (paper - N)
 
 # data I/O
-data = open('./enwik8.txt', 'r').read() # should be simple plain text file
+data = open('./alice29.txt', 'r').read() # should be simple plain text file
 
 chars = list(set(data))
 data_size, M = len(data), len(chars)

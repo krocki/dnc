@@ -23,7 +23,7 @@ learning_rate = 1e-1
 clipgrads = False
 
 # data I/O
-data = open('./enwik8.txt', 'r').read() # should be simple plain text file
+data = open('./alice29.txt', 'r').read() # should be simple plain text file
 
 chars = list(set(data))
 data_size, M = len(data), len(chars)
