@@ -3,6 +3,11 @@ Implementation of Differentiable Neural Computer https://www.nature.com/articles
 
 ### quick start
 ```
+python dnc-debug.py
+```
+
+These versions are cleaned up.
+```
 python rnn-numpy.py
 python lstm-numpy.py
 python dnc-numpy.py
@@ -30,13 +35,6 @@ https://gist.github.com/karpathy/d4dee566867f8291f086
 * faster implementation (PyTorch?)
 * saving the model
 * sample
-
-###### At your own risk
-The debug version
-```
-python dnc-debug.py
-```
-includes sampling and more features, but it's not as clean.
 
 ### Sample output:
 
