@@ -16,6 +16,7 @@ python dnc-numpy.py
 #### Credits
 RNN code based on original work by A.Karpathy (min-char-rnn.py)
 https://gist.github.com/karpathy/d4dee566867f8291f086
+http://karpathy.github.io/2015/05/21/rnn-effectiveness/
 
 ### Features
 * RNN version still depends only on numpy
