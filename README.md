@@ -1,4 +1,4 @@
-# Differentiable Neural Computer
+# Differentiable Neural Computer in Numpy
 Implementation of Differentiable Neural Computer https://www.nature.com/articles/nature20101 as close as possible to the description in the paper. Task: char-level prediction. The repo also includes simple RNN (rnn-numpy.py) and LSTM (lstm-numpy.py). Some external data (ptb, wiki) needs to be downloaded separately.
 
 ### quick start
@@ -30,6 +30,13 @@ https://gist.github.com/karpathy/d4dee566867f8291f086
 * faster implementation (PyTorch?)
 * saving the model
 * sample
+
+###### At your own risk
+The debug version
+```
+python dnc-debug.py
+```
+includes sampling and more features, but it's not as clean.
 
 ### Sample output:
 
