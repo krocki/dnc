@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # author: kmrocki
 
+from __future__ import print_function
 import numpy as np
 import argparse, sys
 import datetime, time
@@ -27,7 +28,7 @@ parser.add_argument('--sample_length', type=int, default=1000, help='sample leng
 parser.add_argument('--check_interval', type=int, default=200, help='check interval (sample, grads)')
 
 opt = parser.parse_args()
-print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sys.argv[0], opt)
+print((datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sys.argv[0], opt))
 logname = opt.fname
 B = opt.batchsize
 S = opt.seqlength
@@ -45,13 +46,13 @@ def gradCheck(inputs, target, cprev, hprev, mprev, rprev):
   global Wxh, Whh, Why, Whr, Whv, Whw, Whe, Wrh, bh, by
   num_checks, delta = 10, 1e-5
   _, dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby, _, _ = lossFun(inputs, targets, cprev, hprev, mprev, rprev)
-  print 'GRAD CHECK\n'
+  print('GRAD CHECK\n')
   with open(gradchecklogname, "w") as myfile: myfile.write("-----\n")
 
   for param,dparam,name in zip([Wxh, Whh, Why, Whr, Whv, Whw, Whe, Wrh, Wry, bh, by], [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby], ['Wxh', 'Whh', 'Why', 'Whr', 'Whv', 'Whw', 'Whe', 'Wrh', 'Wry', 'bh', 'by']):
     s0 = dparam.shape
     s1 = param.shape
-    assert s0 == s1, 'Error dims dont match: %s and %s.' % (`s0`, `s1`)
+    assert s0 == s1, 'Error dims dont match: %s and %s.' % (repr(s0), repr(s1))
     min_error, mean_error, max_error = 1,0,0
     min_numerical, max_numerical = 1e10, -1e10
     min_analytic, max_analytic = 1e10, -1e10
@@ -84,7 +85,7 @@ def gradCheck(inputs, target, cprev, hprev, mprev, rprev):
           valid_checks += 1
 
     mean_error /= num_checks
-    print '%s:\t\tn = [%e, %e]\tmin %e, max %e\t\n\t\ta = [%e, %e]\tmean %e # %d/%d' % (name, min_numerical, max_numerical, min_error, max_error, min_analytic, max_analytic, mean_error, num_checks, valid_checks)
+    print('%s:\t\tn = [%e, %e]\tmin %e, max %e\t\n\t\ta = [%e, %e]\tmean %e # %d/%d' % (name, min_numerical, max_numerical, min_error, max_error, min_analytic, max_analytic, mean_error, num_checks, valid_checks))
       # rel_error should be on order of 1e-7 or less
     entry = '%s:\t\tn = [%e, %e]\tmin %e, max %e\t\n\t\ta = [%e, %e]\tmean %e # %d/%d\n' % (name, min_numerical, max_numerical, min_error, max_error, min_analytic, max_analytic, mean_error, num_checks, valid_checks)
     with open(gradchecklogname, "a") as myfile: myfile.write(entry)
@@ -101,7 +102,7 @@ with open(logname, "a") as myfile:
 data = open('./alice29.txt', 'r').read()
 chars = list(set(data))
 data_size, vocab_size = len(data), len(chars)
-print 'data has %d characters, %d unique.' % (data_size, vocab_size)
+print('data has %d characters, %d unique.' % (data_size, vocab_size))
 char_to_ix = { ch:i for i,ch in enumerate(chars) }
 ix_to_char = { i:ch for i,ch in enumerate(chars) }
 
@@ -430,7 +431,7 @@ if __name__ == "__main__":
       if n % opt.check_interval == 0 and n > 0:
           sample_ix = sample(np.expand_dims(cprev[:,0], axis=1), np.expand_dims(hprev[:,0], axis=1), (mprev[:,:,0]), np.expand_dims(rprev[:,0], axis=1), inputs[0], opt.sample_length)
           txt = ''.join(ix_to_char[ix] for ix in sample_ix)
-          print '----\n %s \n----' % (txt, )
+          print('----\n %s \n----' % (txt, ))
           entry = '%s\n' % (txt)
           with open(samplelogname, "w") as myfile: myfile.write(entry)
           gradCheck(inputs, targets, cprev, hprev, mprev, rprev)
@@ -448,7 +449,7 @@ if __name__ == "__main__":
         entry = '{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, smooth_loss/S)
         with open(logname, "a") as myfile: myfile.write(entry)
 
-        print '%2d: %.3f s, iter %d, %.4f BPC, %.2f char/s' % (v, t, n, smooth_loss / S, (B*S*100)/tdelta) # print progress
+        print('%2d: %.3f s, iter %d, %.4f BPC, %.2f char/s' % (v, t, n, smooth_loss / S, (B*S*100)/tdelta)) # print progress
       for param, dparam, mem in zip([Wxh, Whh, Why, Whr, Whv, Whw, Whe, Wrh, Wry, bh, by],
                                     [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby], 
                                     [mWxh, mWhh, mWhy, mWhr, mWhv, mWhw, mWhe, mWrh, mWry, mbh, mby]):

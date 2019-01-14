@@ -2,6 +2,7 @@
 # author: kmrocki
 # based on the original code by A.Karpathy (char-rnn)
 
+from __future__ import print_function
 import numpy as np
 import argparse, sys
 import datetime, time
@@ -26,7 +27,7 @@ data = open('./alice29.txt', 'r').read()
 
 chars = list(set(data))
 data_size, M = len(data), len(chars)
-print 'data has %d characters, %d unique.' % (data_size, M)
+print('data has %d characters, %d unique.' % (data_size, M))
 char_to_ix = { ch:i for i,ch in enumerate(chars) }
 ix_to_char = { i:ch for i,ch in enumerate(chars) }
 
@@ -118,7 +119,7 @@ while t < T:
       tdelta = time.time()-last
       last = time.time()
       t = time.time()-start
-      print '%.3f s, iter %d, %.4f BPC, %.2f char/s' % (t, n, smooth_loss / S, (B*S*10)/tdelta) # print progress
+      print('%.3f s, iter %d, %.4f BPC, %.2f char/s' % (t, n, smooth_loss / S, (B*S*10)/tdelta)) # print progress
 
   for param, dparam, mem in zip([Wxh, Whh, Why, bh, by],
                                 [dWxh, dWhh, dWhy, dbh, dby], 
