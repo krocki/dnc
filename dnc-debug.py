@@ -10,6 +10,12 @@ from random import uniform
 #import matplotlib.pyplot as plt
 from multiprocessing import Process, Value, Lock
 import time
+
+try:
+  xrange          # Python 2
+except NameError:
+  xrange = range  # Python 3
+
 def sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
 def fun_key_simil(C, K): return np.dot(C, K)
 def dfun_key_simil(C, dsim): return np.dot(C.T, dsim)

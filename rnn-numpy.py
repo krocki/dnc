@@ -9,6 +9,11 @@ import datetime, time
 import random
 from random import uniform
 
+try:
+  xrange          # Python 2
+except NameError:
+  xrange = range  # Python 3
+
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--batchsize', type=int, default = 16, help='batch size')
