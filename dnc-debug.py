@@ -25,7 +25,7 @@ def normalize(V): return V/length(V)
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default = './' + sys.argv[0] + '.log', help='log filename')
 parser.add_argument('--batchsize', type=int, default = 16, help='batch size')
-parser.add_argument('--hidden', type=int, default = 32, help='hiddens')
+parser.add_argument('--hidden', type=int, default = 64, help='hiddens')
 parser.add_argument('--seqlength', type=int, default = 25, help='seqlength')
 parser.add_argument('--timelimit', type=int, default = 600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
@@ -53,7 +53,7 @@ if opt.fp64: datatype = np.float64
 def gradCheck(inputs, target, cprev, hprev, mprev, rprev):
   global Wxh, Whh, Why, Whr, Whv, Whw, Whe, Wrh, bh, by
   num_checks, delta = 10, 1e-5
-  _, dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby, _, _ = lossFun(inputs, targets, cprev, hprev, mprev, rprev)
+  _, dbh, dby, _, _ = lossFun(inputs, targets, cprev, hprev, mprev, rprev)
   print('GRAD CHECK\n')
   with open(gradchecklogname, "w") as myfile: myfile.write("-----\n")
 
@@ -148,7 +148,11 @@ Wry = np.random.randn(vocab_size, MR * MW).astype(datatype)*0.01 # erase strengt
 # init f gates biases higher
 bh[2*N:3*N,:] = 1
 
-def lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
+# re-used.  TODO store in a state class with learn(..) as method
+dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why )
+dWhr, dWhv, dWhw, dWhe, dWrh, dWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
+
+def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
   """
   inputs,targets are both list of integers.
   cprev is HxB array of initial memory cell state
@@ -206,8 +210,9 @@ def lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
         #s = np.sum(np.exp(memory[t-1][:,:,b]), axis=1, keepdims=1)
         #memory[t-1][:,:,b] = np.exp(memory[t-1][:,:,b])/s
 
-        mem_write_gate[t][:,b,None] = np.dot(memory[t-1][:,:,b], mem_write_key[t][:,b,None])
-        mem_read_gate[t][:,b,None] = np.dot(memory[t-1][:,:,b], mem_read_key[t][:,b,None])
+        bb = memory[t-1][:,:,b]
+        mem_write_gate[t][:,b,None] = np.dot(bb, mem_write_key[t][:,b,None])
+        mem_read_gate [t][:,b,None] = np.dot(bb,  mem_read_key[t][:,b,None])
 
     mem_erase_gate[t] = sigmoid(np.dot(Whe, hs[t]))
 
@@ -237,13 +242,13 @@ def lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     for b in range(0,B):
         if ps[t][targets[t,b],b] > 0: loss += -np.log(ps[t][targets[t,b],b]) # softmax (cross-entropy loss)
 
+  global dWxh,dWhh,dWhy,dWhr,dWhv,dWhw,dWhe,dWrh,dWry
   # backward pass: compute gradients going backwards
-  dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why )
+  #dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why )
+  #dWhr, dWhv, dWhw, dWhe, dWrh, dWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
+  for d in [dWxh,dWhh,dWhy,dWhr,dWhv,dWhw,dWhe,dWrh,dWry]: d.fill(0)
 
-  ### ext
-  dWhr, dWhv, dWhw, dWhe, dWrh, dWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
-  ###
-
+  #TODO mutable operations on re-used arrays:
   dbh, dby = np.zeros_like(bh), np.zeros_like(by)
   dcnext = np.zeros_like(cs[0])
   dhnext = np.zeros_like(hs[0])
@@ -283,8 +288,7 @@ def lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     dmem_next = dmemory * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN,1,B)))
 
     for b in range(0,B):
-        dmem_next[:,:,b] += np.dot(dmem_read_gate[:,:,b].T, mem_read_key[t][:,b,None].T)
-        dmem_next[:,:,b] += np.dot(dmem_write_gate[:,:,b].T, mem_write_key[t][:,b,None].T)
+        dmem_next[:,:,b] += np.dot(dmem_read_gate[:,:,b].T, mem_read_key[t][:,b,None].T) + np.dot(dmem_write_gate[:,:,b].T, mem_write_key[t][:,b,None].T)
 
         #  dmem_next[:,:,b] = dmem_next[:,:,b] * memory[t-1][:,:,b]
         #  dmem_next_sum = np.sum(dmem_next[:,:,b], axis=1, keepdims=1)
@@ -365,7 +369,7 @@ def lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     for dparam in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby]:
       np.clip(dparam, -5, 5, out=dparam) # clip to mitigate exploding gradients
 
-  return loss, dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby, cs[len(inputs)-1], hs[len(inputs)-1]
+  return loss, dbh, dby, cs[len(inputs)-1], hs[len(inputs)-1]
 
 def sample(c, h, m, r, seed_ix, n):
   """
@@ -458,7 +462,7 @@ if __name__ == "__main__":
       plot = n % opt.check_interval == 200 and n > 0
 
       # forward S characters through the net and fetch gradient
-      loss, dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby, cprev, hprev = lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot)
+      loss, dbh, dby, cprev, hprev = learn(inputs, targets, cprev, hprev, mprev, rprev, plot)
       smooth_loss = smooth_loss * 0.999 + np.mean(loss)/(np.log(2)*B) * 0.001
       interval = time.time() - last
 
