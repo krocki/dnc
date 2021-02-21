@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 # author: kmrocki
 
-from __future__ import print_function
 import numpy as np
 import argparse, sys
 import datetime, time
 import random
 from random import uniform
 import matplotlib.pyplot as plt
-#from multiprocessing import Process, Value, Lock
 import time
+#from multiprocessing import Process, Value, Lock
+#from __future__ import print_function
 
 try:
   xrange          # Python 2
@@ -21,6 +21,7 @@ def fun_key_simil(C, K): return np.dot(C, K)
 def dfun_key_simil(C, dsim): return np.dot(C.T, dsim)
 def length(V): return np.sqrt(np.sum(V*V))
 def normalize(V): return V/length(V)
+
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default = './' + sys.argv[0] + '.log', help='log filename')
@@ -31,21 +32,36 @@ parser.add_argument('--timelimit', type=int, default = 600, help='time limit (s)
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
 parser.add_argument('--sample_length', type=int, default=500, help='sample length')
-parser.add_argument('--check_interval', type=int, default=200, help='check interval (sample, grads)')
+parser.add_argument('--report_interval', type=int, default=200, help='report interval (sample, grads)')
 
 opt = parser.parse_args()
 print((datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sys.argv[0], opt))
 logname = opt.fname
 gradchecklogname = 'gradcheck.log'
-samplelogname = 'sample.log'
+samplelogname    = 'sample.log'
 B = opt.batchsize
 S = opt.seqlength
 T = opt.timelimit
 GC = opt.gradcheck
 plotting = False
 
-datatype = np.float32
-if opt.fp64: datatype = np.float64
+datatype = np.float32 if opt.fp64 else np.float64
+
+clipGradients = False
+learning_rate = 1e-1 #5*1e-2
+# TODO check the size constraints relative to HN
+MW = 8 # paper - W
+MN = 8 # paper - N
+MR = 1 # paper - R
+
+# hyperparameters
+HN = opt.hidden # size of hidden layer of neurons
+S = opt.seqlength # number of steps to unroll the RNN for
+B = opt.batchsize
+
+
+
+
 
 
 
@@ -105,22 +121,20 @@ with open(logname, "a") as myfile:
     myfile.write("# " + str(entry))
     myfile.write("\n#  ITER\t\tTIME\t\tTRAIN LOSS\n")
 
-# data I/O
+
 #data = open('./ptb/ptb.train.txt', 'r').read() # should be simple plain text file
-data = open('./alice29.txt', 'r').read()
+f = open('./alice29.txt', 'r')
+data = f.read()
+f.close()
+
 chars = list(set(data))
 data_size, vocab_size = len(data), len(chars)
 print('data has %d characters, %d unique.' % (data_size, vocab_size))
 char_to_ix = { ch:i for i,ch in enumerate(chars) }
 ix_to_char = { i:ch for i,ch in enumerate(chars) }
 
-clipGradients = False
 
-# hyperparameters
-HN = opt.hidden # size of hidden layer of neurons
-S = opt.seqlength # number of steps to unroll the RNN for
-learning_rate = 1e-1 #5*1e-2
-B = opt.batchsize
+
 
 # model parameters
 Wxh = np.random.randn(4*HN, vocab_size).astype(datatype)*0.01 # input to hidden
@@ -129,13 +143,9 @@ Why = np.random.randn(vocab_size, HN).astype(datatype)*0.01 # hidden to output
 bh = np.zeros((4*HN, 1), dtype = datatype) # hidden bias
 by = np.zeros((vocab_size, 1), dtype = datatype) # output bias
 
-# external memory
-# TODO check the size constraints relative to HN
-MW = 8 # paper - W
-MN = 8 # paper - N
+
 N = HN
 M = vocab_size
-MR = 1 # paper - R
 
 Wrh = np.random.randn(4*HN, MW).astype(datatype)*0.01 # read vector to hidden
 Whv = np.random.randn(MW, HN).astype(datatype)*0.01 # write content
@@ -159,25 +169,28 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
   hprev is HxB array of initial hidden state
   returns the loss, gradients on model parameters, and last hidden state
   """
-  # inputs, outputs, controller states
-  xs, hs, ys, ps, gs, cs = {}, {}, {}, {}, {}, {}
+  
+  tt = len(inputs)
 
-  # external mem
-  mem_new_content, mem_read_gate, mem_write_gate, mem_erase_gate, memory, rs = {}, {}, {}, {}, {}, {}
-  mem_read_key, mem_write_key = {}, {}
+  mem_erase_gate, mem_new_content, mem_read_gate, mem_write_gate = tt*[None],tt*[None],tt*[None],tt*[None]
+
+  #TODO remove the need for dictionaries due to negative indexing, so that this can be numpy array
+  xs, hs, ys, ps, gs, cs = {}, {}, {}, {}, {}, {}
+  memory, rs, mem_read_key, mem_write_key = {},{},{},{}
+  
   #init previous states
   hs[-1], cs[-1], rs[-1], memory[-1] = np.copy(hprev), np.copy(cprev), np.copy(rprev), np.copy(mprev)
 
-  for t in xrange(len(inputs)):
+  for t in xrange(tt):
       mem_write_gate[t] = np.zeros((MN,B), dtype=datatype)
-      mem_read_gate[t] = np.zeros((MN,B), dtype=datatype)
+      mem_read_gate[t]  = np.zeros((MN,B), dtype=datatype)
 
   dmem_write_key = np.zeros((MW,B), dtype=datatype)
   dmem_read_key = np.zeros((MW,B), dtype=datatype)
 
   loss = 0
   # forward pass
-  for t in xrange(len(inputs)):
+  for t in xrange(tt):
     xs[t] = np.zeros((vocab_size, B), dtype=datatype) # encode in 1-of-k representation
     for b in range(0,B): xs[t][:,b][inputs[t][b]] = 1
 
@@ -187,7 +200,7 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     gs[t] += np.dot(Wrh, rs[t-1]) # add previous read vector
 
     # gates nonlinear part
-    gs[t][0:3*N,:] = sigmoid(gs[t][0:3*N,:]) #i, o, f gates
+    gs[t][0:3*N,:]    = sigmoid(gs[t][0:3*N,:]) #i, o, f gates
     gs[t][3*N:4*N, :] = np.tanh(gs[t][3*N:4*N,:]) #c gate
 
     #mem(t) = c gate * i gate + f gate * mem(t-1)
@@ -226,17 +239,13 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     mem_read_gate[t] = mem_read_gate[t]/mem_read_gate_sum
     ######
 
-    memory[t] = memory[t-1] * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN, 1, B)))
-    memory[t] += np.reshape(mem_new_content[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN, 1, B))
 
-    rs[t] = memory[t] * np.reshape(mem_read_gate[t], (MN, 1, B))
-    rs[t] = np.sum(rs[t], axis=0)
+    memory[t] = memory[t-1] * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN, 1, B))) + np.reshape(mem_new_content[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN, 1, B))
 
-    ys[t] += np.dot(Wry, rs[t]) # add read vector to output
-
-    ###########################
-    mx = np.max(ys[t], axis=0)
-    ys[t] -= mx
+    rs[t] = np.sum(memory[t] * np.reshape(mem_read_gate[t], (MN, 1, B)), axis=0)
+ 
+   
+    ys[t] += np.dot(Wry, rs[t]) - np.max(ys[t], axis=0) # add read vector to output
     ps[t] = np.exp(ys[t]) / np.sum(np.exp(ys[t]), axis=0) # probabilities for next chars
 
     for b in range(0,B):
@@ -258,7 +267,7 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
   dg = np.zeros_like(gs[0])
   W_ones = np.ones((MW,1))
 
-  for t in reversed(xrange(len(inputs))):
+  for t in reversed(xrange(tt)):
     dy = np.copy(ps[t])
     for b in range(0,B): dy[targets[t][b], b] -= 1 # backprop into y
     dWhy += np.dot(dy, hs[t].T)
@@ -301,8 +310,9 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     dmem_read_gate = np.reshape(dmem_read_gate, (MN,B))
 
     for b in range(0,B):
-        dmem_write_key[:,b,None] = np.dot(memory[t-1][:,:,b].T, dmem_write_gate[:,b,None])
-        dmem_read_key[:,b,None] = np.dot(memory[t-1][:,:,b].T, dmem_read_gate[:,b,None])
+        mt = memory[t-1][:,:,b].T
+        dmem_write_key[:,b,None] = np.dot(mt, dmem_write_gate[:,b,None])
+        dmem_read_key[:,b,None]  = np.dot(mt, dmem_read_gate[:,b,None])
 
         #  dmem_read_key[:,b,None] = dmem_read_key[:,b,None] * mem_read_key[t][:,b,None]
         #  dmem_read_key_sum = np.sum(dmem_read_key[:,b,None], axis=0)
@@ -313,7 +323,7 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
         #  dmem_write_key[:,b,None] -= mem_write_key[t][:,b,None] * dmem_write_key_sum
 
 
-    dWhw += np.dot(np.reshape(dmem_write_key, (MW, B)), hs[t].T)
+    dWhw += np.dot(np.reshape(dmem_write_key, (MW,B)), hs[t].T)
     dWhr += np.dot(np.reshape(dmem_read_key, (MW,B)), hs[t].T)
     dWhe += np.dot(np.sum(dmem_erase_gate, axis=0), hs[t].T)
     dWhv += np.dot(np.sum(dmem_new_content, axis=0), hs[t].T)
@@ -323,7 +333,7 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     dh = np.dot(Why.T, dy) + dhnext # backprop into h
 
     dh += np.dot(Whw.T, np.reshape(dmem_write_key, (MW,B)))
-    dh += np.dot(Whr.T, np.reshape(dmem_read_key, (MW,B)))
+    dh += np.dot(Whr.T, np.reshape(dmem_read_key,  (MW,B)))
     dh += np.dot(Whe.T, np.sum(dmem_erase_gate, axis=0))
     dh += np.dot(Whv.T, np.sum(dmem_new_content, axis=0))
     # external end ###
@@ -335,13 +345,18 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     dg[0:N,:] = gs[t][3*N:4*N,:] * dc # i gates
     dg[2*N:3*N,:] = cs[t-1] * dc # f gates
     dg[3*N:4*N,:] = gs[t][0:N,:] * dc # c gates
-    dg[0:3*N,:] = dg[0:3*N,:] * gs[t][0:3*N,:] * (1 - gs[t][0:3*N,:]) # backprop through sigmoids
-    dg[3*N:4*N,:] = dg[3*N:4*N,:] * (1 - gs[t][3*N:4*N,:] * gs[t][3*N:4*N,:]) # backprop through tanh
+    
+    gst03 = gs[t][0:3*N,:]
+    dg[0:3*N,:] = dg[0:3*N,:] * gst03 * (1 - gst03) # backprop through sigmoids
+    
+    gst34 = gs[t][3*N:4*N,:]
+    dg[3*N:4*N,:] = dg[3*N:4*N,:] * (1 - gst34 * gst34) # backprop through tanh
+    
     dbh += np.expand_dims(np.sum(dg,axis=1), axis=1)
-    dWxh += np.dot(dg, xs[t].T)
+    dWxh += np.dot(dg, xs[ t ].T)
     dWhh += np.dot(dg, hs[t-1].T)
     dWrh += np.dot(dg, rs[t-1].T)
-    dhnext = np.dot(Whh.T, dg)
+    dhnext   = np.dot(Whh.T, dg)
     drs_next = np.dot(Wrh.T, dg)
     dcnext = dc * gs[t][2*N:3*N,:]
     
@@ -369,7 +384,7 @@ def learn(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     for dparam in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby]:
       np.clip(dparam, -5, 5, out=dparam) # clip to mitigate exploding gradients
 
-  return loss, dbh, dby, cs[len(inputs)-1], hs[len(inputs)-1]
+  return loss, dbh, dby, cs[tt-1], hs[tt-1]
 
 def sample(c, h, m, r, seed_ix, n):
   """
@@ -448,7 +463,7 @@ if __name__ == "__main__":
           targets[:,b] = [char_to_ix[ch] for ch in data[Pb+1:Pb+S+1]]
 
       # sample from the model now and then
-      if (n+1) % opt.check_interval == 0:
+      if (n+1) % opt.report_interval == 0:
           #if log..
           sample_ix = sample(np.expand_dims(cprev[:,0], axis=1), np.expand_dims(hprev[:,0], axis=1), (mprev[:,:,0]), np.expand_dims(rprev[:,0], axis=1), inputs[0], opt.sample_length)
           txt = ''.join(ix_to_char[ix] for ix in sample_ix)
@@ -459,14 +474,14 @@ if __name__ == "__main__":
           if (GC):
               gradCheck(inputs, targets, cprev, hprev, mprev, rprev)
 
-      plot = n % opt.check_interval == 200 and n > 0
+      plot = n % opt.report_interval == 200 and n > 0
 
       # forward S characters through the net and fetch gradient
       loss, dbh, dby, cprev, hprev = learn(inputs, targets, cprev, hprev, mprev, rprev, plot)
       smooth_loss = smooth_loss * 0.999 + np.mean(loss)/(np.log(2)*B) * 0.001
       interval = time.time() - last
 
-      if n % opt.check_interval == 0 and n > 0:
+      if n % opt.report_interval == 0 and n > 0:
         #if log..
         tdelta = time.time()-last
         last = time.time()
