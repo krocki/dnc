@@ -7,8 +7,8 @@ import argparse, sys
 import datetime, time
 import random
 from random import uniform
-#import matplotlib.pyplot as plt
-from multiprocessing import Process, Value, Lock
+import matplotlib.pyplot as plt
+#from multiprocessing import Process, Value, Lock
 import time
 
 try:
@@ -23,29 +23,31 @@ def length(V): return np.sqrt(np.sum(V*V))
 def normalize(V): return V/length(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
-parser.add_argument('--fname', type=str, default = './' + sys.argv[0] + '.dat', help='log filename')
-parser.add_argument('--batchsize', type=int, default = 8, help='batch size')
-parser.add_argument('--hidden', type=int, default = 100, help='hiddens')
-parser.add_argument('--seqlength', type=int, default = 15, help='seqlength')
-parser.add_argument('--timelimit', type=int, default = 10000, help='time limit (s)')
-parser.add_argument('--gradcheck', action='store_const', const=True, default=True, help='run gradcheck?')
-parser.add_argument('--fp64', action='store_const', const=True, default=True, help='double precision?')
-parser.add_argument('--sample_length', type=int, default=1000, help='sample length')
+parser.add_argument('--fname', type=str, default = './' + sys.argv[0] + '.log', help='log filename')
+parser.add_argument('--batchsize', type=int, default = 16, help='batch size')
+parser.add_argument('--hidden', type=int, default = 32, help='hiddens')
+parser.add_argument('--seqlength', type=int, default = 25, help='seqlength')
+parser.add_argument('--timelimit', type=int, default = 600, help='time limit (s)')
+parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
+parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
+parser.add_argument('--sample_length', type=int, default=500, help='sample length')
 parser.add_argument('--check_interval', type=int, default=200, help='check interval (sample, grads)')
 
 opt = parser.parse_args()
 print((datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sys.argv[0], opt))
 logname = opt.fname
+gradchecklogname = 'gradcheck.log'
+samplelogname = 'sample.log'
 B = opt.batchsize
 S = opt.seqlength
 T = opt.timelimit
 GC = opt.gradcheck
-#datatype = np.float32
-#if opt.fp64: 
-datatype = np.float64
+plotting = False
 
-gradchecklogname = 'gradcheck.log'
-samplelogname = 'sample.log'
+datatype = np.float32
+if opt.fp64: datatype = np.float64
+
+
 
 # gradient checking
 def gradCheck(inputs, target, cprev, hprev, mprev, rprev):
@@ -112,10 +114,12 @@ print('data has %d characters, %d unique.' % (data_size, vocab_size))
 char_to_ix = { ch:i for i,ch in enumerate(chars) }
 ix_to_char = { i:ch for i,ch in enumerate(chars) }
 
+clipGradients = False
+
 # hyperparameters
 HN = opt.hidden # size of hidden layer of neurons
 S = opt.seqlength # number of steps to unroll the RNN for
-learning_rate = 5*1e-2
+learning_rate = 1e-1 #5*1e-2
 B = opt.batchsize
 
 # model parameters
@@ -126,19 +130,19 @@ bh = np.zeros((4*HN, 1), dtype = datatype) # hidden bias
 by = np.zeros((vocab_size, 1), dtype = datatype) # output bias
 
 # external memory
-read_heads = 1 # paper - R
+# TODO check the size constraints relative to HN
 MW = 8 # paper - W
 MN = 8 # paper - N
 N = HN
 M = vocab_size
-MR = read_heads
+MR = 1 # paper - R
 
 Wrh = np.random.randn(4*HN, MW).astype(datatype)*0.01 # read vector to hidden
 Whv = np.random.randn(MW, HN).astype(datatype)*0.01 # write content
 Whr = np.random.randn(MW, HN).astype(datatype)*0.01 # read strength
 Whw = np.random.randn(MW, HN).astype(datatype)*0.01 # write strength
 Whe = np.random.randn(MW, HN).astype(datatype)*0.01 # erase strength
-Wry = np.random.randn(vocab_size, read_heads * MW).astype(datatype)*0.01 # erase strength
+Wry = np.random.randn(vocab_size, MR * MW).astype(datatype)*0.01 # erase strength
 
 # i o f c
 # init f gates biases higher
@@ -336,27 +340,31 @@ def lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot=False):
     dhnext = np.dot(Whh.T, dg)
     drs_next = np.dot(Wrh.T, dg)
     dcnext = dc * gs[t][2*N:3*N,:]
-    #  if plot:
-        #  _b_ = 1 # sequence number
-        #  plt.subplot(2,1,1)
-        #  plt.imshow(memory[10][:,:,_b_])
-        #  plt.colorbar()
-        #  plt.title('memory state')
-        #  plt.subplot(2,1,2)
-        #  read_gates_history = np.zeros((S, MN))
-        #  for i in range(0,S): read_gates_history[i,:] = mem_read_gate[i][:,_b_]
-        #  plt.imshow(read_gates_history.T)
-        #  cbar = plt.colorbar()
-        #  cbar.ax.get_yaxis().labelpad = 20
-        #  cbar.ax.set_ylabel('activation', rotation=270)
-        #  plt.ylabel('location')
-        #  plt.yticks(np.arange(0, MN))
-        #  plt.xlabel('time step')
-        #  plt.title('mem read gate in time')
-        #  plt.show()
-        #  plot = False
-    #for dparam in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby]:
-    #  np.clip(dparam, -5, 5, out=dparam) # clip to mitigate exploding gradients
+    
+  if plotting and plot:
+      _b_ = 1 # sequence number
+      plt.subplot(2,1,1)
+      plt.imshow(memory[MW][:,:,_b_])
+      plt.colorbar()
+      plt.title('memory state')
+      plt.subplot(2,1,2)
+      read_gates_history = np.zeros((S, MN))
+      for i in range(0,S): read_gates_history[i,:] = mem_read_gate[i][:,_b_]
+      plt.imshow(read_gates_history.T)
+      cbar = plt.colorbar()
+      cbar.ax.get_yaxis().labelpad = 20
+      cbar.ax.set_ylabel('activation', rotation=270)
+      plt.ylabel('location')
+      plt.yticks(np.arange(0, MN))
+      plt.xlabel('time step')
+      plt.title('mem read gate in time')
+      plt.show()
+      plot = False
+
+  if clipGradients:
+    for dparam in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby]:
+      np.clip(dparam, -5, 5, out=dparam) # clip to mitigate exploding gradients
+
   return loss, dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby, cs[len(inputs)-1], hs[len(inputs)-1]
 
 def sample(c, h, m, r, seed_ix, n):
@@ -402,7 +410,7 @@ def sample(c, h, m, r, seed_ix, n):
   return ixes
 
 if __name__ == "__main__":
-#def proc(v):
+
     v = 0
     n = 0
     p = np.random.randint(len(data)-1-S,size=(B)).tolist()
@@ -418,7 +426,8 @@ if __name__ == "__main__":
     smooth_loss = -np.log(1.0/vocab_size)*S # loss at iteration 0
     start = time.time()
 
-    t = time.time()-start
+
+    t = 0
     last=start
     while t < T:
       # prepare inputs (we're sweeping from left to right in steps S long)
@@ -430,25 +439,31 @@ if __name__ == "__main__":
             rprev[:,b] = np.zeros(MW, dtype=datatype) # reset read vec memory
             p[b] = np.random.randint(len(data)-1-S)
 
-          inputs[:,b] = [char_to_ix[ch] for ch in data[p[b]:p[b]+S]]
-          targets[:,b] = [char_to_ix[ch] for ch in data[p[b]+1:p[b]+S+1]]
+          Pb = p[b]
+          inputs[:,b] = [char_to_ix[ch] for ch in data[Pb:Pb+S]]
+          targets[:,b] = [char_to_ix[ch] for ch in data[Pb+1:Pb+S+1]]
 
       # sample from the model now and then
-      if n % opt.check_interval == 0 and n > 0:
+      if (n+1) % opt.check_interval == 0:
+          #if log..
           sample_ix = sample(np.expand_dims(cprev[:,0], axis=1), np.expand_dims(hprev[:,0], axis=1), (mprev[:,:,0]), np.expand_dims(rprev[:,0], axis=1), inputs[0], opt.sample_length)
           txt = ''.join(ix_to_char[ix] for ix in sample_ix)
           print('----\n %s \n----' % (txt, ))
           entry = '%s\n' % (txt)
           with open(samplelogname, "w") as myfile: myfile.write(entry)
-          gradCheck(inputs, targets, cprev, hprev, mprev, rprev)
+          
+          if (GC):
+              gradCheck(inputs, targets, cprev, hprev, mprev, rprev)
+
+      plot = n % opt.check_interval == 200 and n > 0
 
       # forward S characters through the net and fetch gradient
-      plot = n % opt.check_interval == 200 and n > 0
       loss, dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby, cprev, hprev = lossFun(inputs, targets, cprev, hprev, mprev, rprev, plot)
       smooth_loss = smooth_loss * 0.999 + np.mean(loss)/(np.log(2)*B) * 0.001
       interval = time.time() - last
 
       if n % opt.check_interval == 0 and n > 0:
+        #if log..
         tdelta = time.time()-last
         last = time.time()
         t = time.time()-start
@@ -456,16 +471,16 @@ if __name__ == "__main__":
         with open(logname, "a") as myfile: myfile.write(entry)
 
         print('%2d: %.3f s, iter %d, %.4f BPC, %.2f char/s' % (v, t, n, smooth_loss / S, (B*S*100)/tdelta)) # print progress
-      for param, dparam, mem in zip([Wxh, Whh, Why, Whr, Whv, Whw, Whe, Wrh, Wry, bh, by],
-                                    [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby], 
-                                    [mWxh, mWhh, mWhy, mWhr, mWhv, mWhw, mWhe, mWrh, mWry, mbh, mby]):
-      # perform parameter update with Adagrad
-       mem += dparam * dparam
-       param += -learning_rate * dparam / np.sqrt(mem + 1e-8) # adagrad update
+
+      COMPONENTS = [ ( Wxh, dWxh, mWxh), (Whh,dWhh,mWhh), (Why,dWhy,mWhy), (Whr,dWhr,mWhr), (Whv,dWhv,mWhv), (Whe,dWhe,mWhe), (Wrh,dWrh,mWrh), (Wry,dWry,mWry), (bh,dbh,mbh), (by,dby,mby)  ]
+      for param, dparam, mem in COMPONENTS:
+        # perform parameter update with Adagrad
+        mem += dparam * dparam
+        param += -learning_rate * dparam / np.sqrt(mem + 1e-8) # adagrad update
 
       for b in range(0,B): p[b] += S # move data pointer
       n += 1 # iteration counter
-##
+
 #procs = [Process(target=proc, args=(i,)) for i in range(0,8)]
 #for p in procs: 
 #    p.start()
