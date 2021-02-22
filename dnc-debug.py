@@ -29,10 +29,10 @@ def normalize(V: array): return V / mag(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
-parser.add_argument('--batchsize', type=int, default=16, help='batch size')
+parser.add_argument('--batchsize', type=int, default=32, help='batch size')
 parser.add_argument('--hidden', type=int, default=64, help='hiddens')
 parser.add_argument('--seqlength', type=int, default=25, help='seqlength')
-parser.add_argument('--timelimit', type=int, default=600, help='time limit (s)')
+parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
 parser.add_argument('--sample_length', type=int, default=500, help='sample length')
@@ -54,8 +54,8 @@ val = np.float32 if opt.fp64 else np.float64
 clipGradients = False
 learning_rate = 1e-1  # 5*1e-2
 # TODO check the size constraints with regard to HN
-MW:int = 8  # paper - W
-MN:int = 8  # paper - N
+MW:int = 16  # paper - W
+MN:int = 16  # paper - N
 MR:int = 1  # paper - R
 
 def key() -> array: return np.zeros((MW, B), dtype=val)

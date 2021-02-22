@@ -3,7 +3,7 @@ Implementation of Differentiable Neural Computer https://www.nature.com/articles
 
 ### quick start
 ```
-python dnc-debug.py
+OMP_WAIT_POLICY=PASSIVE OMP_NUM_THREADS=8   python dnc-debug.py
 ```
 
 These versions are cleaned up.
