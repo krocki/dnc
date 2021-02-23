@@ -29,14 +29,14 @@ def normalize(V: array): return V / mag(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
-parser.add_argument('--batchsize', type=int, default=32, help='batch size')
-parser.add_argument('--hidden', type=int, default=64, help='hiddens')
-parser.add_argument('--seqlength', type=int, default=25, help='seqlength')
+parser.add_argument('--batchsize', type=int, default=16, help='batch size')
+parser.add_argument('--hidden', type=int, default=128, help='hiddens')
+parser.add_argument('--seqlength', type=int, default=8, help='seqlength')
 parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
-parser.add_argument('--sample_length', type=int, default=500, help='sample length')
-parser.add_argument('--report_interval', type=int, default=200, help='report interval (sample, grads)')
+parser.add_argument('--sample_length', type=int, default=1024, help='sample length')
+parser.add_argument('--report_interval', type=int, default=100, help='report interval (sample, grads)')
 
 opt = parser.parse_args()
 print((datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sys.argv[0], opt))
@@ -56,7 +56,7 @@ learning_rate = 1e-1  # 5*1e-2
 # TODO check the size constraints with regard to HN
 MW:int = 16  # paper - W
 MN:int = 16  # paper - N
-MR:int = 1  # paper - R
+MR:int = 1  # paper - R  TODO allow R>1
 
 def key() -> array: return np.zeros((MW, B), dtype=val)
 def gate() -> array: return np.zeros((MN, B), dtype=val)
@@ -66,7 +66,8 @@ N:int = opt.hidden  # size of hidden layer of neurons
 S:int = opt.seqlength  # number of steps to unroll the RNN for
 B:int = opt.batchsize
 inputs:array = np.zeros((S, B), dtype=int)
-I:int = len(inputs)
+I:int = S
+
 
 # gradient checking
 def gradCheck(cprev, hprev, mprev, rprev):
@@ -130,8 +131,11 @@ with open(logname, "a") as myfile:
     myfile.write("# " + str(entry))
     myfile.write("\n#  ITER\t\tTIME\t\tTRAIN LOSS\n")
 
-# data = open('./ptb/ptb.train.txt', 'r').read() # should be simple plain text file
-f = open('./alice29.txt', 'r')
+
+file = "/tmp/y.txt"
+#file = 'alice29.txt'
+#file = '/tmp/x.c'
+f = open(file, 'r')
 data = f.read()
 f.close()
 
@@ -160,7 +164,7 @@ Whv = np.random.randn(MW, N).astype(val) * rngAmp  # write content
 Whr = np.random.randn(MW, N).astype(val) * rngAmp  # read strength
 Whw = np.random.randn(MW, N).astype(val) * rngAmp  # write strength
 Whe = np.random.randn(MW, N).astype(val) * rngAmp  # erase strength
-Wry = np.random.randn(vocab_size, MR * MW).astype(val) * rngAmp  # erase strength
+Wry = np.random.randn(vocab_size, MR * MW).astype(val) * rngAmp
 
 
 
@@ -257,7 +261,8 @@ def learn(cprev, hprev, mprev, rprev, plot=False):
         ps[t] = psT
 
         for b in range(0, B):
-            if psT[targets[t, b], b] > 0: loss += -np.log(psT[targets[t, b], b])  # softmax (cross-entropy loss)
+            psTB = psT[targets[t, b], b]
+            if psTB>0: loss += -np.log(psTB)  # softmax (cross-entropy loss)
 
     global dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry
     # backward pass: compute gradients going backwards
@@ -397,9 +402,8 @@ def learn(cprev, hprev, mprev, rprev, plot=False):
 
 
 def softmax(gate:array, t:int):
-    gate[t] = np.exp(gate[t])
-    mem_read_gate_sum = np.sum(gate[t], axis=0)
-    gate[t] /= mem_read_gate_sum
+    gate[t] = np.exp(gate[t])    
+    gate[t] /= np.sum(gate[t], axis=0)
 
 
 def sample(c, h, m, r, seed_ix, n):
@@ -425,23 +429,25 @@ def sample(c, h, m, r, seed_ix, n):
         mem_write_key = np.dot(Whw, h)
         mem_read_key = np.dot(Whr, h)
         mem_write_gate = np.exp(mem_write_key)
-        mem_read_gate = np.exp(mem_read_key)
-        mem_write_gate_sum = np.sum(mem_write_gate, axis=0)
-        mem_read_gate_sum = np.sum(mem_read_gate, axis=0)
-        mem_write_gate = mem_write_gate / mem_write_gate_sum
-        mem_read_gate = mem_read_gate / mem_read_gate_sum
+        mem_read_gate = np.exp(mem_read_key)             
+        mem_write_gate = mem_write_gate / np.sum(mem_write_gate, axis=0)
+        mem_read_gate = mem_read_gate / np.sum(mem_read_gate, axis=0)
         mem_erase_gate = sigmoid(np.dot(Whe, h))
         # print m.shape
         m = m * (1 - np.reshape(mem_erase_gate, (1, MW)) * np.reshape(mem_write_gate, (MN, 1)))  # 1
         #  m = m * (1-mem_erase_gate) # 2
         m += np.reshape(mem_new_content, (1, MW)) * np.reshape(mem_write_gate, (MN, 1))
         r = np.expand_dims(np.sum(m * np.reshape(mem_read_gate, (MN, 1)), axis=0), axis=1)
-        y += np.dot(Wry, r)
-        p = np.exp(y) / np.sum(np.exp(y))
-        ix = np.random.choice(range(vocab_size), p=p.ravel())
-        x = np.zeros((vocab_size, 1), dtype=val)
+        y += np.dot(Wry, r)       
+        
+        #softmax decision?
+        ye = np.exp(y)
+        yn = ye / np.sum(ye)
+        ix = np.random.choice(range(vocab_size), p=yn.ravel())
+        
+        ixes.append(ix)        
+        x.fill(0) #x = np.zeros((vocab_size, 1), dtype=val)
         x[ix] = 1
-        ixes.append(ix)
     return ixes
 
 
@@ -460,11 +466,12 @@ mWxh, mWhh, mWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
 mWhr, mWhv, mWhw, mWhe, mWrh, mWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(
     Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
 mbh, mby = np.zeros_like(bh), np.zeros_like(by)  # memory variables for Adagrad
-smooth_loss = -np.log(1.0 / vocab_size) * S  # loss at iteration 0
+#smooth_loss = -np.log(1.0 / vocab_size) * S  # loss at iteration 0
 start = time.time()
 
 t = 0
 last = start
+lossSum = 0
 while t < T:
     # prepare inputs (we're sweeping from left to right in steps S long)
     for b in range(0, B):
@@ -497,20 +504,29 @@ while t < T:
 
     # forward S characters through the net and fetch gradient
     loss, dbh, dby, cprev, hprev = learn(cprev, hprev, mprev, rprev, plot)
-    smooth_loss = smooth_loss * 0.999 + np.mean(loss) / (np.log(2) * B) * 0.001
-    interval = time.time() - last
 
+    lossSum += loss    
+
+    
     if n % opt.report_interval == 0 and n > 0:
         # if log..
-        tdelta = time.time() - last
-        last = time.time()
-        t = time.time() - start
-        entry = '{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, smooth_loss / S)
-        with open(logname, "a") as myfile: myfile.write(entry)
+        
+        now = time.time()
+        tdelta = now - last
+        last = now
 
-        print('%2d: %.3f s, iter %d, %.4f BPC, %.2f char/s' % (
-        v, t, n, smooth_loss / S, (B * S * 100) / tdelta))  # print progress
+        lossMean = lossSum / opt.report_interval
+        lossSum = 0
+        #bpc = (smooth_loss * 0.999 + lossMean / (np.log(2) * B) * 0.001)/S
+        lpc = lossMean / (S*B)
+        bpc = lossMean / (np.log(2)*S*B)
+        cps = (S*opt.report_interval) / tdelta
+        t = now - start
+               
+        with open(logname, "a") as myfile: myfile.write('{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, bpc))
 
+        print('%2d: %.3f s, iter %d, %.4f loss, %.4f BPC, %.2f char/s' % (v, t, n, lpc, bpc, cps))  # print progress
+    
     COMPONENTS = [(Wxh, dWxh, mWxh), (Whh, dWhh, mWhh), (Why, dWhy, mWhy), (Whr, dWhr, mWhr), (Whv, dWhv, mWhv),
                   (Whe, dWhe, mWhe), (Wrh, dWrh, mWrh), (Wry, dWry, mWry), (bh, dbh, mbh), (by, dby, mby)]
     for param, dparam, mem in COMPONENTS:
