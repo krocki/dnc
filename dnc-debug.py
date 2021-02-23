@@ -10,15 +10,19 @@ from typing import Type, List, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numba import jit,njit
 
-from numpy import ndarray
+from scipy.special import expit as sigmoid
 
-from scipy.special import expit as sigmoid  # def sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
+@jit
+def _sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
+
 from scipy.special import logsumexp
 
-array: Type[ndarray] = np.ndarray
-floatarray: Type[list] = list[Type[float]]
-listOfArrays: Type[list] = list[Type[ndarray]]
+
+array = np.ndarray
+floatarray = list
+listOfArrays = list
 
 def dfun_key_simil(C, dsim): return np.dot(C.T, dsim)
 
@@ -30,9 +34,9 @@ def normalize(V: array): return V / mag(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
-parser.add_argument('--batchsize', type=int, default=64, help='batch size')
-parser.add_argument('--hidden', type=int, default=128, help='hiddens')
-parser.add_argument('--seqlength', type=int, default=25, help='seqlength')
+parser.add_argument('--batchsize', type=int, default=128, help='batch size')
+parser.add_argument('--hidden', type=int, default=32, help='hiddens')
+parser.add_argument('--seqlength', type=int, default=16, help='seqlength')
 parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
@@ -55,8 +59,8 @@ val = np.float32 if opt.fp64 else np.float64
 clipGradients = 0 #set to positive value to enable
 
 learning_rate = \
-    0.05
-    #0.1   # 5*1e-2
+    0.1
+    #0.05
 
 # TODO check the size constraints with regard to HN
 MW:int = 16  # paper - W
@@ -137,8 +141,8 @@ with open(logname, "a") as myfile:
 
 
 #file = "/tmp/y.txt"
-#file = 'alice29.txt'
-file = '/tmp/x.c'
+file = 'alice29.txt'
+#file = '/tmp/x.c'
 f = open(file, 'r')
 data = f.read()
 f.close()
@@ -190,6 +194,7 @@ mem_read_key: listOfArrays = I * [array]
 mem_write_key: listOfArrays = I * [array]
 
 
+
 def learn(cprev, hprev, mprev, rprev):
     """
     inputs,targets are both list of integers.
@@ -216,62 +221,48 @@ def learn(cprev, hprev, mprev, rprev):
     loss : float = 0
     # forward pass
     for t in range(I):
-        xs[t].fill(0)  # encode in 1-of-k representation
-        for b in range(0, B): xs[t][:, b][inputs[t][b]] = 1
+        xsT = xs[t]
+        xsT.fill(0)  # encode in 1-of-k representation
+        for b in range(0, B): xsT[:, b][inputs[t][b]] = 1
+
+        hs0, rs0 = hs[t-1], rs[t-1]
 
         # gates, linear part + previous read vector
-        gsT: array = np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t - 1]) + bh + np.dot(Wrh, rs[t - 1])
-        gs[t] = gsT
+        gst = np.dot(Wxh, xsT) + np.dot(Whh, hs0) + bh + np.dot(Wrh, rs0)
+        hst, yst, cst = learnGST(gst, cs[t - 1], N)
+        gs[t] = gst
+        hs[t] = hst
+        cs[t] = cst
 
-        # gates nonlinear part
-        gsT[0:3 * N, :] = sigmoid(gsT[0:3 * N, :])  # i, o, f gates
-        gsT[3 * N:4 * N, :] = np.tanh(gsT[3 * N:4 * N, :])  # c gate
 
-        # mem(t) = c gate * i gate + f gate * mem(t-1)
-        cs[t] = gsT[3 * N:4 * N, :] * gsT[0:N, :] + gsT[2 * N:3 * N, :] * cs[t - 1]
-        cs[t] = np.tanh(cs[t])  # mem cell - nonlinearity
-
-        hstT: array = gsT[N:2 * N, :] * cs[t]  # new hidden state
-        hs[t] = hstT
-
-        ys[t] = np.dot(Why, hstT) + by  # unnormalized log probabilities for next chars
 
         ##### external mem ########
-        mem_read_key[t] = np.dot(Whr, hstT)  # key used for content based read
-        mem_write_key[t] = np.dot(Whw, hstT)  # key used for content based read
+        mrkt = mem_read_key[t] = np.dot(Whr, hst)  # key used for content based read
+        mwkt = mem_write_key[t] = np.dot(Whw, hst)  # key used for content based read
 
-        mem_new_content[t] = np.dot(Whv, hstT)
+        m0 = memory[t - 1]
+        mwgt, mrgt = mem_write_gate[t], mem_read_gate[t]
 
-        for b in range(0, B):
-            # normalize - unit length
-            # mem_read_key[t][:,b] = np.exp(mem_read_key[t][:,b]) / np.sum(np.exp(mem_read_key[t][:,b]), axis=0) # probabilities for next chars
-            # mem_write_key[t][:,b] = np.exp(mem_write_key[t][:,b]) / np.sum(np.exp(mem_write_key[t][:,b]), axis=0) # probabilities for next chars
+        mem_new_content[t] = np.dot(Whv, hst)
 
-            # s = np.sum(np.exp(memory[t-1][:,:,b]), axis=1, keepdims=1)
-            # memory[t-1][:,:,b] = np.exp(memory[t-1][:,:,b])/s
+        normalizeKeys(m0, mrgt, mrkt, mwgt, mwkt, B)
 
-            bb: array = memory[t - 1][:, :, b]
-            mem_write_gate[t][:,b,None] = np.dot(bb, mem_write_key[t][:,b,None])
-            mem_read_gate [t][:,b,None] = np.dot(bb,  mem_read_key[t][:,b,None])
+        mem_erase_gate[t] = sigmoid(np.dot(Whe, hst))
+        mem_write_gate[t] = softmax(mwgt)
+        mem_read_gate[t]  = softmax(mrgt)
 
-        mem_erase_gate[t] = sigmoid(np.dot(Whe, hstT))
+        m1 = m0 * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mwgt, (MN, 1, B))) + np.reshape(mem_new_content[t], (1, MW, B)) * np.reshape(mwgt, (MN, 1, B))
+        memory[t] = m1
 
-        softmax(mem_write_gate, t)
-        softmax(mem_read_gate, t)
+        rst = learnY(m1, mrgt, yst, Wry)
 
-        memory[t] = memory[t - 1] * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN, 1, B))) + np.reshape(mem_new_content[t], (1, MW, B)) * np.reshape(mem_write_gate[t], (MN, 1, B))
-
-        rs[t] = np.sum(memory[t] * np.reshape(mem_read_gate[t], (MN, 1, B)), axis=0)
-
-        ys[t] += np.dot(Wry, rs[t]) - np.max(ys[t], axis=0)  # add read vector to output
-
-        psT = np.exp(ys[t] - logsumexp(ys[t], axis=0))  # probabilities for next chars
+        psT = np.exp(yst - logsumexp(yst, axis=0))  # probabilities for next chars
         # psT = np.exp(ys[t]) / np.sum(np.exp(ys[t]), axis=0) # probabilities for next chars
-        ps[t] = psT
 
-        for b in range(0, B):
-            psTB = psT[targets[t, b], b]
-            if psTB>0: loss += -np.log(psTB)  # softmax (cross-entropy loss)
+        ys[t] = yst
+        ps[t] = psT
+        rs[t] = rst
+        loss = lossAccum(loss, psT, t)
 
     global dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry
     # backward pass: compute gradients going backwards
@@ -293,9 +284,9 @@ def learn(cprev, hprev, mprev, rprev):
         dy = np.copy(ps[t])
         for b in range(0, B): dy[targets[t][b], b] -= 1  # backprop into y
 
-        hstT: array = hs[t].T
+        hst: array = hs[t].T
 
-        dWhy += np.dot(dy, hstT)
+        dWhy += np.dot(dy, hst)
 
         ##external######
         dWry += np.dot(dy, rs[t].T)
@@ -347,10 +338,10 @@ def learn(cprev, hprev, mprev, rprev):
             #  dmem_write_key_sum = np.sum(dmem_write_key[:,b,None], axis=0)
             #  dmem_write_key[:,b,None] -= mem_write_key[t][:,b,None] * dmem_write_key_sum
 
-        dWhw += np.dot(np.reshape(dmem_write_key, (MW, B)), hstT)
-        dWhr += np.dot(np.reshape(dmem_read_key, (MW, B)), hstT)
-        dWhe += np.dot(np.sum(dmem_erase_gate, axis=0), hstT)
-        dWhv += np.dot(np.sum(dmem_new_content, axis=0), hstT)
+        dWhw += np.dot(np.reshape(dmem_write_key, (MW, B)), hst)
+        dWhr += np.dot(np.reshape(dmem_read_key, (MW, B)), hst)
+        dWhe += np.dot(np.sum(dmem_erase_gate, axis=0), hst)
+        dWhv += np.dot(np.sum(dmem_new_content, axis=0), hst)
         ########
 
         dby += np.expand_dims(np.sum(dy, axis=1), axis=1)
@@ -392,9 +383,62 @@ def learn(cprev, hprev, mprev, rprev):
     return loss, dbh, dby, cs[I - 1], hs[I - 1]
 
 
-def softmax(gate:array, t:int):
-    gate[t] = np.exp(gate[t])    
-    gate[t] /= np.sum(gate[t], axis=0)
+#@njit
+def learnY(m1, mrgt, yst, Wry):
+    rst = np.sum(m1 * np.reshape(mrgt, (MN, 1, B)), axis=0)
+    yst += np.dot(Wry, rst) - np.max(yst, axis=0)  # add read vector to output
+    return rst
+
+
+def lossAccum(loss, psT, t):
+    for b in range(0, B):
+        psTB = psT[targets[t, b], b]
+        if psTB > 0: loss += -np.log(psTB)  # softmax (cross-entropy loss)
+    return loss
+
+
+#@jit
+def normalizeKeys(m0, mrgt, mrkt, mwgt, mwkt, B):
+    for b in range(B):
+        # normalize - unit length
+        # mem_read_key[t][:,b] = np.exp(mem_read_key[t][:,b]) / np.sum(np.exp(mem_read_key[t][:,b]), axis=0) # probabilities for next chars
+        # mem_write_key[t][:,b] = np.exp(mem_write_key[t][:,b]) / np.sum(np.exp(mem_write_key[t][:,b]), axis=0) # probabilities for next chars
+
+        # s = np.sum(np.exp(memory[t-1][:,:,b]), axis=1, keepdims=1)
+        # memory[t-1][:,:,b] = np.exp(memory[t-1][:,:,b])/s
+
+        bb = m0[:, :, b]
+        mwgt[:, b, None] = np.dot(bb, mwkt[:, b, None])
+        mrgt[:, b, None] = np.dot(bb, mrkt[:, b, None])
+
+
+#@njit
+def learnGST(gst, cs0, N):
+    # gates nonlinear part
+    learnGST0(gst, N)
+    # mem(t) = c gate * i gate + f gate * mem(t-1)
+    cst = learnCST(cs0, gst, N)
+    hst = gst[N:2 * N, :] * cst  # new hidden state
+    yst = np.dot(Why, hst) + by  # unnormalized log probabilities for next chars
+    return hst, yst, cst
+
+
+@njit
+def learnCST(cs0, gst, N):
+    cst = gst[3 * N:4 * N, :] * gst[0:N, :] + gst[2 * N:3 * N, :] * cs0
+    cst = np.tanh(cst)  # mem cell - nonlinearity
+    return cst
+
+
+@njit
+def learnGST0(gst, N):
+    gst[0:3 * N, :] = _sigmoid(gst[0:3 * N, :])  # i, o, f gates
+    gst[3 * N:4 * N, :] = np.tanh(gst[3 * N:4 * N, :])  # c gate
+
+@njit
+def softmax(gate):
+    gate = np.exp(gate)
+    return gate / np.sum(gate, axis=0)
 
 
 def sample(c, h, m, r, seed_ix, n):
@@ -495,7 +539,11 @@ def clear():
         mprev[:, :, b] = np.zeros((MN, MW),dtype=val)  # reset ext memory
         #mprev[:, :, b] = np.random.randn(MN, MW) * rngAmp  # reset ext memory
         rprev[:, b] = np.zeros(MW, dtype=val)  # reset read vec memory
-        p[b] = np.random.randint(len(data) - 1 - S)
+        p[b] = ptrNew()
+
+
+def ptrNew():
+    return np.random.randint(len(data) - S)
 
 
 t = 0
@@ -508,6 +556,7 @@ while t < T:
     # prepare inputs (we're sweeping from left to right in steps S long)
     for b in range(0, B):
         Pb = p[b]
+        if (Pb + S >= len(data)): Pb = p[b] = ptrNew()
         inputs[:, b] = [char_to_ix[ch] for ch in data[Pb:Pb + S]]
         targets[:, b] = [char_to_ix[ch] for ch in data[Pb + 1:Pb + S + 1]]
 
