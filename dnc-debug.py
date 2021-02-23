@@ -6,10 +6,11 @@ import datetime
 import sys
 import time
 from random import uniform
-from typing import Type, List
+from typing import Type, List, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+
 from numpy import ndarray
 
 from scipy.special import expit as sigmoid  # def sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
@@ -29,9 +30,9 @@ def normalize(V: array): return V / mag(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
-parser.add_argument('--batchsize', type=int, default=16, help='batch size')
+parser.add_argument('--batchsize', type=int, default=64, help='batch size')
 parser.add_argument('--hidden', type=int, default=128, help='hiddens')
-parser.add_argument('--seqlength', type=int, default=8, help='seqlength')
+parser.add_argument('--seqlength', type=int, default=25, help='seqlength')
 parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
@@ -51,8 +52,12 @@ plotting = False
 
 val = np.float32 if opt.fp64 else np.float64
 
-clipGradients = False
-learning_rate = 1e-1  # 5*1e-2
+clipGradients = 0 #set to positive value to enable
+
+learning_rate = \
+    0.05
+    #0.1   # 5*1e-2
+
 # TODO check the size constraints with regard to HN
 MW:int = 16  # paper - W
 MN:int = 16  # paper - N
@@ -65,7 +70,6 @@ def gate() -> array: return np.zeros((MN, B), dtype=val)
 N:int = opt.hidden  # size of hidden layer of neurons
 S:int = opt.seqlength  # number of steps to unroll the RNN for
 B:int = opt.batchsize
-inputs:array = np.zeros((S, B), dtype=int)
 I:int = S
 
 
@@ -132,9 +136,9 @@ with open(logname, "a") as myfile:
     myfile.write("\n#  ITER\t\tTIME\t\tTRAIN LOSS\n")
 
 
-file = "/tmp/y.txt"
+#file = "/tmp/y.txt"
 #file = 'alice29.txt'
-#file = '/tmp/x.c'
+file = '/tmp/x.c'
 f = open(file, 'r')
 data = f.read()
 f.close()
@@ -175,14 +179,18 @@ mem_erase_gate, mem_new_content, mem_read_gate, mem_write_gate = I * [array], I 
 dmem_write_key, dmem_read_key = key(), key()
 for t in range(I):
     mem_write_gate[t], mem_read_gate[t] = gate(), gate()
-xs: floatarray = I * [float]
+
+xs: listOfArrays = I * [array]
+for t in range(I): xs[t] = np.zeros((vocab_size, B), dtype=val)  # encode in 1-of-k representation
+
 ys: floatarray = I * [float]
-ps: floatarray = I * [float]
-gs: floatarray = I * [float]
+ps: listOfArrays= I * [array]
+gs: listOfArrays = I * [array]
 mem_read_key: listOfArrays = I * [array]
 mem_write_key: listOfArrays = I * [array]
 
-def learn(cprev, hprev, mprev, rprev, plot=False):
+
+def learn(cprev, hprev, mprev, rprev):
     """
     inputs,targets are both list of integers.
     cprev is HxB array of initial memory cell state
@@ -192,10 +200,11 @@ def learn(cprev, hprev, mprev, rprev, plot=False):
 
     # TODO remove the need for dictionaries due to negative indexing, so that this can be numpy array
     hs, cs = {}, {}
-    memory, rs = {}, {}
+    rs = {}
+    memory = {}
 
     # init previous states
-    hs[-1], cs[-1], rs[-1], memory[-1] = np.copy(hprev), np.copy(cprev), np.copy(rprev), np.copy(mprev)
+    hs[-1], cs[-1], rs[-1], memory[-1] = np.copy(hprev), np.copy(cprev), np.copy(rprev), mprev
 
 
     for t in range(I):
@@ -207,11 +216,11 @@ def learn(cprev, hprev, mprev, rprev, plot=False):
     loss : float = 0
     # forward pass
     for t in range(I):
-        xs[t] = np.zeros((vocab_size, B), dtype=val)  # encode in 1-of-k representation
+        xs[t].fill(0)  # encode in 1-of-k representation
         for b in range(0, B): xs[t][:, b][inputs[t][b]] = 1
 
         # gates, linear part + previous read vector
-        gsT : array = np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t - 1]) + bh + np.dot(Wrh, rs[t - 1])
+        gsT: array = np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t - 1]) + bh + np.dot(Wrh, rs[t - 1])
         gs[t] = gsT
 
         # gates nonlinear part
@@ -375,28 +384,10 @@ def learn(cprev, hprev, mprev, rprev, plot=False):
         drs_next : float = np.dot(Wrh.T, dg)
         dcnext = dc * gs[t][2 * N:3 * N, :]
 
-    if plotting and plot:
-        _b_ = 1  # sequence number
-        plt.subplot(2, 1, 1)
-        plt.imshow(memory[MW][:, :, _b_])
-        plt.colorbar()
-        plt.title('memory state')
-        plt.subplot(2, 1, 2)
-        read_gates_history = np.zeros((S, MN), dtype=val)
-        for i in range(0, S): read_gates_history[i, :] = mem_read_gate[i][:, _b_]
-        plt.imshow(read_gates_history.T)
-        cbar = plt.colorbar()
-        cbar.ax.get_yaxis().labelpad = 20
-        cbar.ax.set_ylabel('activation', rotation=270)
-        plt.ylabel('location')
-        plt.yticks(np.arange(0, MN))
-        plt.xlabel('time step')
-        plt.title('mem read gate in time')
-        plt.show()
 
-    if clipGradients:
+    if clipGradients > 0:
         for dparam in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby]:
-            np.clip(dparam, -5, 5, out=dparam)  # clip to mitigate exploding gradients
+            np.clip(dparam, -clipGradients, +clipGradients, out=dparam)  # clip to mitigate exploding gradients
 
     return loss, dbh, dby, cs[I - 1], hs[I - 1]
 
@@ -451,13 +442,40 @@ def sample(c, h, m, r, seed_ix, n):
     return ixes
 
 
+def plot():
+    k = 1
+    for i in range(I):
+        for j in range(MW):
+            plt.subplot(I, MW, k)
+            k += 1
+            plt.imshow(memory[i][:, :, j])
+            #plt.colorbar()
+            #plt.title('memory %d' % i)
+    
+    # plt.subplot(2, 1, 2)
+    # read_gates_history = np.zeros((S, MN), dtype=val)
+    # for i in range(0, S): read_gates_history[i, :] = mem_read_gate[i][:, _b_]
+    # plt.imshow(read_gates_history.T)
+    # cbar = plt.colorbar()
+    # cbar.ax.get_yaxis().labelpad = 20
+    # cbar.ax.set_ylabel('activation', rotation=270)
+    # plt.ylabel('location')
+    # plt.yticks(np.arange(0, MN))
+    # plt.xlabel('time step')
+    # plt.title('mem read gate in time')
+    
+    plt.show()
+
 
 
 v = 0
 n = 0
-p = np.random.randint(len(data) - 1 - S, size=B).tolist()
 
-targets : array = np.zeros((S, B), dtype=int) #maybe short int
+p:array = np.random.randint(len(data) - 1 - S, size=B).tolist() #pointers
+
+inputs:array  = np.zeros((S, B), dtype=int)
+targets:array = np.zeros((S, B), dtype=int)
+
 cprev = np.zeros((N, B), dtype=val)
 hprev = np.zeros((N, B), dtype=val)
 mprev = np.zeros((MN, MW, B), dtype=val)
@@ -469,25 +487,32 @@ mbh, mby = np.zeros_like(bh), np.zeros_like(by)  # memory variables for Adagrad
 #smooth_loss = -np.log(1.0 / vocab_size) * S  # loss at iteration 0
 start = time.time()
 
+def clear():
+    print("clear")
+    for b in range(0, B):
+        cprev[:, b] = np.zeros(N, dtype=val)  # reset LSTM memory
+        hprev[:, b] = np.zeros(N, dtype=val)  # reset hidden memory
+        mprev[:, :, b] = np.zeros((MN, MW),dtype=val)  # reset ext memory
+        #mprev[:, :, b] = np.random.randn(MN, MW) * rngAmp  # reset ext memory
+        rprev[:, b] = np.zeros(MW, dtype=val)  # reset read vec memory
+        p[b] = np.random.randint(len(data) - 1 - S)
+
+
 t = 0
 last = start
 lossSum = 0
+
+clear()
+
 while t < T:
     # prepare inputs (we're sweeping from left to right in steps S long)
     for b in range(0, B):
-        if p[b] + S + 1 >= len(data) or n == 0:
-            cprev[:, b] = np.zeros(N, dtype=val)  # reset LSTM memory
-            hprev[:, b] = np.zeros(N, dtype=val)  # reset hidden memory
-            mprev[:, :, b] = np.random.randn(MN, MW) * rngAmp  # reset ext memory
-            rprev[:, b] = np.zeros(MW, dtype=val)  # reset read vec memory
-            p[b] = np.random.randint(len(data) - 1 - S)
-
         Pb = p[b]
         inputs[:, b] = [char_to_ix[ch] for ch in data[Pb:Pb + S]]
         targets[:, b] = [char_to_ix[ch] for ch in data[Pb + 1:Pb + S + 1]]
 
     # sample from the model now and then
-    if (n + 1) % opt.report_interval == 0:
+    if n > 0 and n % opt.report_interval == 0:
         # if log..
         sample_ix = sample(np.expand_dims(cprev[:, 0], axis=1), np.expand_dims(hprev[:, 0], axis=1),
                            (mprev[:, :, 0]), np.expand_dims(rprev[:, 0], axis=1), inputs[0], opt.sample_length)
@@ -500,16 +525,16 @@ while t < T:
         if GC:
             gradCheck(targets, cprev, hprev, mprev, rprev)
 
-    plot = n % opt.report_interval == 200 and n > 0
 
     # forward S characters through the net and fetch gradient
-    loss, dbh, dby, cprev, hprev = learn(cprev, hprev, mprev, rprev, plot)
+    loss, dbh, dby, cprev, hprev = learn(cprev, hprev, mprev, rprev)
 
     lossSum += loss    
 
-    
     if n % opt.report_interval == 0 and n > 0:
         # if log..
+        if plotting:
+           plot()
         
         now = time.time()
         tdelta = now - last
@@ -520,7 +545,7 @@ while t < T:
         #bpc = (smooth_loss * 0.999 + lossMean / (np.log(2) * B) * 0.001)/S
         lpc = lossMean / (S*B)
         bpc = lossMean / (np.log(2)*S*B)
-        cps = (S*opt.report_interval) / tdelta
+        cps = (S*B*opt.report_interval) / tdelta
         t = now - start
                
         with open(logname, "a") as myfile: myfile.write('{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, bpc))
@@ -535,6 +560,7 @@ while t < T:
         param += -learning_rate * dparam / np.sqrt(mem + 1e-8)  # adagrad update
 
     for b in range(0, B): p[b] += S  # move data pointer
+    
     n += 1  # iteration counter
 
 # procs = [Process(target=proc, args=(i,)) for i in range(0,8)]
