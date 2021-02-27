@@ -6,23 +6,23 @@ import datetime
 import sys
 import time
 from random import uniform
-from typing import Type, List, Union
+from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
-#from numba import jit,njit
-
 from scipy.special import expit as sigmoid
-
-#@jit
-#def _sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
-
 from scipy.special import logsumexp
+
+# from numba import jit,njit
+# from Cython.Includes.numpy import ndarray
+# from numpy import ndarray
+# @jit
+# def _sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
 
 
 array = np.ndarray
-floatarray = list
-listOfArrays = list
+floatarray = list[float]
+listOfArrays = list[array]
 
 def dfun_key_simil(C, dsim): return np.dot(C.T, dsim)
 
@@ -35,8 +35,8 @@ def normalize(V: array): return V / mag(V)
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
 parser.add_argument('--batchsize', type=int, default=16, help='batch size')
-parser.add_argument('--hidden', type=int, default=32, help='hiddens')
-parser.add_argument('--seqlength', type=int, default=16, help='seqlength')
+parser.add_argument('--hidden', type=int, default=96, help='hiddens')
+parser.add_argument('--seqlength', type=int, default=32, help='seqlength')
 parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
@@ -56,24 +56,24 @@ plotting = False
 
 val = np.float32 if opt.fp64 else np.float64
 
-clipGradients = 16 #set to positive value to enable
+clipGradients = 0 #set to positive value to enable
 
 learning_rate = \
-    0.05
+    0.2
     #0.1
-    #0.2
+adagradStability = \
+    1e-6
+    #1e-8
 
 # TODO check the size constraints with regard to HN
-MW:int = 4  # paper - W
-MN:int = 4  # paper - N
+MW:int = 6  # paper - W
+MN:int = 6  # paper - N
 MR:int = 1  # paper - R  TODO allow R>1
 
 # hyperparameters
-N:int = opt.hidden  # size of hidden layer of neurons
+H:int = opt.hidden  # size of hidden layer of neurons
 S:int = opt.seqlength  # number of steps to unroll the RNN for
 B:int = opt.batchsize
-I:int = S
-
 
 # gradient checking
 def gradCheck(cprev, hprev, mprev, rprev):
@@ -146,31 +146,34 @@ data = f.read()
 f.close()
 
 chars = list(set(data))
-data_size : int = len(data)
-vocab_size : int = len(chars)
+data_size  : int = len(data)
+V : int = len(chars)
 
-print('data has %d characters, %d unique.' % (data_size, vocab_size))
+print('data has %d characters, %d unique.' % (data_size, V))
 char_to_ix: dict = {ch: i for i, ch in enumerate(chars)}
 ix_to_char: dict = {i: ch for i, ch in enumerate(chars)}
 
-# model parameters
-rngAmp:float = 0.02
 
-Wxh : array = np.random.randn(4 * N, vocab_size).astype(val) * rngAmp  # input to hidden
-Whh : array = np.random.randn(4 * N, N).astype(val) * rngAmp  # hidden to hidden
-Why : array = np.random.randn(vocab_size, N).astype(val) * rngAmp  # hidden to output
+rngAmp:float = \
+    0.0001
+    #0.001
 
-bh : array = np.zeros((4 * N, 1), dtype=val)  # hidden bias
-bh[2 * N:3 * N, :] = 1 # i o f c : init f gates biases higher
+Wxh : array = np.random.randn(4 * H, V).astype(val) * rngAmp  #       input -> hidden
+Whh : array = np.random.randn(4 * H, H).astype(val) * rngAmp           #                hidden -> hidden*
+Why : array = np.random.randn(V, H).astype(val) * rngAmp      #                hidden -> output
+Wry = np.random.randn(V, MR * MW).astype(val) * rngAmp        #  read value ----------->  output
+Wrh = np.random.randn(4 * H, MW).astype(val) * rngAmp                  #  read value -> hidden
+Whr = np.random.randn(MW, H).astype(val) * rngAmp                      #                hidden -> read strength
+Whe = np.random.randn(MW, H).astype(val) * rngAmp                      #                hidden -> erase strength
+Whw = np.random.randn(MW, H).astype(val) * rngAmp                      #                hidden -> write strength
+Whv = np.random.randn(MW, H).astype(val) * rngAmp                      #                hidden -> write content
 
-by = np.zeros((vocab_size, 1), dtype=val)  # output bias
 
-Wrh = np.random.randn(4 * N, MW).astype(val) * rngAmp  # read vector to hidden
-Whv = np.random.randn(MW, N).astype(val) * rngAmp  # write content
-Whr = np.random.randn(MW, N).astype(val) * rngAmp  # read strength
-Whw = np.random.randn(MW, N).astype(val) * rngAmp  # write strength
-Whe = np.random.randn(MW, N).astype(val) * rngAmp  # erase strength
-Wry = np.random.randn(vocab_size, MR * MW).astype(val) * rngAmp
+bh : array = np.zeros((4 * H, 1), dtype=val)  # hidden bias
+bh[2 * H:3 * H, :] = 1 # i o f c : init f gates biases higher
+
+by = np.zeros((V, 1), dtype=val)  # output bias
+
 
 
 
@@ -178,22 +181,24 @@ Wry = np.random.randn(vocab_size, MR * MW).astype(val) * rngAmp
 
 def key()  -> array: return np.zeros((MW, B), dtype=val)
 def gate() -> array: return np.zeros((MN, B), dtype=val)
+def seqArray() -> listOfArrays: return S * [array]
 
 dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
 dWhr, dWhv, dWhw, dWhe, dWrh, dWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
-mem_erase_gate, mem_new_content, mem_read_gate, mem_write_gate = I * [array], I * [array], I * [array], I * [array]
+
+mem_erase_gate, mem_new_content, mem_read_gate, mem_write_gate = seqArray(), seqArray(), seqArray(), seqArray()
 dmem_write_key, dmem_read_key = key(), key()
-for t in range(I):
+for t in range(S):
     mem_write_gate[t], mem_read_gate[t] = gate(), gate()
 
-xs: listOfArrays = I * [array]
-for t in range(I): xs[t] = np.zeros((vocab_size, B), dtype=val)  # encode in 1-of-k representation
+xs = seqArray()
+for t in range(S): xs[t] = np.zeros((V, B), dtype=val)  # encode in 1-of-k representation
 
-ys: floatarray = I * [float]
-ps: listOfArrays= I * [array]
-gs: listOfArrays = I * [array]
-mem_read_key: listOfArrays = I * [array]
-mem_write_key: listOfArrays = I * [array]
+ys: floatarray = S*[float]
+ps = seqArray()
+gs = seqArray()
+mem_read_key = seqArray()
+mem_write_key = seqArray()
 
 
 #learning/training procedure
@@ -206,14 +211,13 @@ def put(cprev, hprev, seed, rprev):
     """
 
     # TODO remove the need for dictionaries due to negative indexing, so that this can be numpy array
-    hs, cs = {}, {}
-    rs = {}
+    hs, cs, rs = {-1:hprev}, {-1:cprev}, {-1: rprev}
+    global S
 
     # init previous states
-    hs[-1], cs[-1], rs[-1] = hprev, cprev, rprev
-    memory: listOfArrays = I*[array]
+    memory = seqArray()
 
-    for t in range(I):
+    for t in range(S):
         mem_write_gate[t].fill(0)
         mem_read_gate [t].fill(0)
     dmem_write_key.fill(0)
@@ -225,20 +229,25 @@ def put(cprev, hprev, seed, rprev):
     # backward pass: compute gradients going backwards
     # dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why )
     # dWhr, dWhv, dWhw, dWhe, dWrh, dWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
-    dbh, dby = reverse(cs, hs, seed, memory, rs)
+    reverse(cs, hs, seed, memory, rs)
 
     if clipGradients > 0:
         for dparam in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry, dbh, dby]:
             np.clip(dparam, -clipGradients, +clipGradients, out=dparam)  # clip to mitigate exploding gradients
 
-    return loss, dbh, dby, cs[I - 1], hs[I - 1]
+    return loss, cs[S - 1], hs[S - 1]
 
 
-def reverse(cs, hs, seed, memory, rs):
+dbh, dby = np.zeros_like(bh), np.zeros_like(by)
+
+
+def reverse(cs, hs, seed, memory: List[array], rs):
     global dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry
     for d in [dWxh, dWhh, dWhy, dWhr, dWhv, dWhw, dWhe, dWrh, dWry]: d.fill(0)
     # TODO mutable operations on re-used arrays:
-    dbh, dby = np.zeros_like(bh), np.zeros_like(by)
+    global dbh, dby
+    dbh.fill(0)
+    dby.fill(0)
     dcnext = np.zeros_like(cs[0])
     dhnext = np.zeros_like(hs[0])
     # dmemory = np.zeros_like(memory[0])
@@ -246,9 +255,11 @@ def reverse(cs, hs, seed, memory, rs):
     drs_next = np.zeros_like(rs[0])
     dg = np.zeros_like(gs[0])
     W_ones = np.ones((MW, 1), dtype=val)
-    for t in reversed(range(I)):
+    for t in reversed(range(S)):
         dy = np.copy(ps[t])
-        for b in range(0, B): dy[targets[t][b], b] -= 1  # backprop into y
+        tt = targets[t]
+        for b in range(0, B):
+            dy[tt[b], b] -= 1  # backprop into y
 
         hst: array = hs[t].T
 
@@ -262,9 +273,13 @@ def reverse(cs, hs, seed, memory, rs):
         dmemory = np.reshape(drs, (1, MW, B)) * np.reshape(rgt, (MN, 1, B)) + dmem_next
 
         ones_t = W_ones.T
+
         m0 = memory[t - 1] if t > 0 else seed
+
+        memoryEraseT = mem_erase_gate[t]
+
         dmem_write_gate = np.dot(ones_t,
-                                 dmemory * (mem_new_content[t] - mem_erase_gate[t] * m0))  # iface gates
+                                 dmemory * (mem_new_content[t] - memoryEraseT * m0))  # iface gates
 
         dmem_read_gate =  np.dot(ones_t, drs * memory[t])
 
@@ -280,7 +295,7 @@ def reverse(cs, hs, seed, memory, rs):
         dmem_new_content = dmemory * mnr
 
         dmem_erase_gate = -dmemory * m0 * mnr
-        dmem_next = dmemory * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * mnr)
+        dmem_next = dmemory * (1 - np.reshape(memoryEraseT, (1, MW, B)) * mnr)
 
         for b in range(0, B):
             dmem_next[:, :, b] += np.dot(dmem_read_gate[:, :, b].T, mem_read_key[t][:, b, None].T) + np.dot(
@@ -291,7 +306,7 @@ def reverse(cs, hs, seed, memory, rs):
             #  dmem_next[:,:,b] -= memory[t-1][:,:,b] * dmem_next_sum
 
         #  dmem_read_key = dmem_read_gate
-        dmem_erase_gate = dmem_erase_gate * mem_erase_gate[t] * (1 - mem_erase_gate[t])
+        dmem_erase_gate = dmem_erase_gate * memoryEraseT * (1 - memoryEraseT)
 
         dmem_write_gate = np.reshape(dmem_write_gate, (MN, B))
         dmem_read_gate = np.reshape(dmem_read_gate, (MN, B))
@@ -313,7 +328,7 @@ def reverse(cs, hs, seed, memory, rs):
         dWhw += np.dot(dmemWriteKey, hst)
         dMemReadKey = np.reshape(dmem_read_key, (MW, B))
         dWhr += np.dot(dMemReadKey, hst)
-        dWhe += np.dot(np.sum(dmem_erase_gate, axis=0), hst)
+        dWhe += np.dot(np.sum(dmem_erase_gate,  axis=0), hst)
         dWhv += np.dot(np.sum(dmem_new_content, axis=0), hst)
         ########
 
@@ -327,19 +342,22 @@ def reverse(cs, hs, seed, memory, rs):
         # external end ###
 
         gst = gs[t]
-        dc = dh * gst[N:2 * N, :] + dcnext  # backprop into c
-        dc = dc * (1 - cs[t] * cs[t])  # backprop though tanh
 
-        dg[N:2 * N, :] = dh * cs[t]  # o gates
-        dg[0:N, :] = gst[3 * N:4 * N, :] * dc  # i gates
-        dg[2 * N:3 * N, :] = cs[t - 1] * dc  # f gates
-        dg[3 * N:4 * N, :] = gst[0:N, :] * dc  # c gates
+                  # backprop into c             # ...then backprop though tanh
+        cst = cs[t]
 
-        gst03 = gst[0:3 * N, :]
-        dg[0:3 * N, :] = dg[0:3 * N, :] * gst03 * (1 - gst03)  # backprop through sigmoids
+        dc = (dh * gst[H:2 * H, :] + dcnext)    * (1 - cst * cst)
 
-        gst34 = gst[3 * N:4 * N, :]
-        dg[3 * N:4 * N, :] = dg[3 * N:4 * N, :] * (1 - gst34 * gst34)  # backprop through tanh
+        dg[H:2 * H, :] = dh * cst  # o gates
+        dg[0:H, :] = gst[3 * H:4 * H, :] * dc  # i gates
+        dg[2 * H:3 * H, :] = cs[t - 1] * dc  # f gates
+        dg[3 * H:4 * H, :] = gst[0:H, :] * dc  # c gates
+
+        gst03 = gst[0:3 * H, :]
+        dg[0:3 * H, :] = dg[0:3 * H, :] * gst03 * (1 - gst03)  # backprop through sigmoids
+
+        gst34 = gst[3 * H:4 * H, :]
+        dg[3 * H:4 * H, :] = dg[3 * H:4 * H, :] * (1 - gst34 * gst34)  # backprop through tanh
 
         dbh  += np.expand_dims(np.sum(dg, axis=1), axis=1)
         dWxh += np.dot(dg, xs[t].T)
@@ -347,13 +365,12 @@ def reverse(cs, hs, seed, memory, rs):
         dWrh += np.dot(dg, rs[t - 1].T)
         dhnext: float = np.dot(Whh.T, dg)
         drs_next: float = np.dot(Wrh.T, dg)
-        dcnext = dc * gst[2 * N:3 * N, :]
-    return dbh, dby
+        dcnext = dc * gst[2 * H:3 * H, :]
 
 
 def forward(cs, hs, seed, memory, rs):
     loss : float = 0
-    for t in range(I):
+    for t in range(S):
         xsT = xs[t]
         xsT.fill(0)  # encode in 1-of-k representation
         for b in range(0, B): xsT[:, b][inputs[t][b]] = 1
@@ -362,7 +379,7 @@ def forward(cs, hs, seed, memory, rs):
 
         # gates, linear part + previous read vector
         gst = np.dot(Wxh, xsT) + np.dot(Whh, hs0) + bh + np.dot(Wrh, rs0)
-        hst, yst, cst = learnGST(gst, cs[t - 1], N)
+        hst, yst, cst = learnGST(gst, cs[t - 1], H)
         gs[t] = gst
         hs[t] = hst
         cs[t] = cst
@@ -372,6 +389,7 @@ def forward(cs, hs, seed, memory, rs):
         mwkt = mem_write_key[t] = np.dot(Whw, hst)  # key used for content based read
 
         m0 = memory[t - 1] if t > 0 else seed
+
         mwgt, mrgt = mem_write_gate[t], mem_read_gate[t]
 
         mem_new_content[t] = np.dot(Whv, hst)
@@ -463,17 +481,17 @@ def get(c, h, m, r, seed_ix, n):
     sample a sequence of integers from the model
     h is memory state, seed_ix is seed letter for first time step
     """
-    x = np.zeros((vocab_size, 1), dtype=val)
+    x = np.zeros((V, 1), dtype=val)
     x[seed_ix] = 1
     ixes = []
 
     for t in range(n):
         g = np.dot(Wxh, x) + np.dot(Whh, h) + np.dot(Wrh, r) + bh
-        g[0:3 * N, :] = sigmoid(g[0:3 * N, :])
-        g[3 * N:4 * N, :] = np.tanh(g[3 * N:4 * N, :])
-        c = g[3 * N:4 * N, :] * g[0:N, :] + g[2 * N:3 * N, :] * c
+        g[0:3 * H, :] = sigmoid(g[0:3 * H, :])
+        g[3 * H:4 * H, :] = np.tanh(g[3 * H:4 * H, :])
+        c = g[3 * H:4 * H, :] * g[0:H, :] + g[2 * H:3 * H, :] * c
         c = np.tanh(c)
-        h = g[N:2 * N, :] * c
+        h = g[H:2 * H, :] * c
         mem_new_content = np.dot(Whv, h)
         # mem_write_gate = sigmoid(np.dot(Whw, h))
         # mem_read_gate = sigmoid(np.dot(Whr, h))
@@ -501,7 +519,7 @@ def get(c, h, m, r, seed_ix, n):
         #softmax decision?
         ye = np.exp(y)
         yn = ye / np.sum(ye)
-        ix = np.random.choice(range(vocab_size), p=yn.ravel())
+        ix = np.random.choice(range(V), p=yn.ravel())
         
         ixes.append(ix)        
         x.fill(0) #x = np.zeros((vocab_size, 1), dtype=val)
@@ -517,9 +535,9 @@ def expSumNorm(mem_read_key):
 
 def plot(memory):
     k = 1
-    for i in range(I):
+    for i in range(S):
         for j in range(MW):
-            plt.subplot(I, MW, k)
+            plt.subplot(S, MW, k)
             k += 1
             plt.imshow(memory[i][:, :, j])
             #plt.colorbar()
@@ -550,10 +568,10 @@ p:array = np.random.randint(len(data) - 1 - S, size=B).tolist() #pointers
 inputs:array  = np.zeros((S, B), dtype=int)
 targets:array = np.zeros((S, B), dtype=int)
 
-cprev = np.zeros((N, B), dtype=val)
-hprev = np.zeros((N, B), dtype=val)
-mprev = np.zeros((MN, MW, B), dtype=val)
-rprev = np.zeros((MW, B), dtype=val)
+C = np.zeros((H, B), dtype=val)
+hprev = np.zeros((H, B), dtype=val)
+R = np.zeros((MW, B), dtype=val)
+M = np.zeros((MN, MW, B), dtype=val)
 mWxh, mWhh, mWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
 mWhr, mWhv, mWhw, mWhe, mWrh, mWry = np.zeros_like(Whr), np.zeros_like(Whv), np.zeros_like(Whw), np.zeros_like(
     Whe), np.zeros_like(Wrh), np.zeros_like(Wry)
@@ -564,11 +582,11 @@ start = time.time()
 def clear():
     print("clear")
     for b in range(0, B):
-        cprev[:, b] = np.zeros(N, dtype=val)  # reset LSTM memory
-        hprev[:, b] = np.zeros(N, dtype=val)  # reset hidden memory
-        mprev[:, :, b] = np.zeros((MN, MW),dtype=val)  # reset ext memory
+        C[:, b] = np.zeros(H, dtype=val)  # reset LSTM memory
+        hprev[:, b] = np.zeros(H, dtype=val)  # reset hidden memory
+        M[:, :, b] = np.zeros((MN, MW), dtype=val)  # reset ext memory
         #mprev[:, :, b] = np.random.randn(MN, MW) * rngAmp  # reset ext memory
-        rprev[:, b] = np.zeros(MW, dtype=val)  # reset read vec memory
+        R[:, b] = np.zeros(MW, dtype=val)  # reset read vec memory
         p[b] = ptrNew()
 
 
@@ -582,6 +600,9 @@ lossSum = 0
 
 clear()
 
+COMPONENTS = [(Wxh, dWxh, mWxh), (Whh, dWhh, mWhh), (Why, dWhy, mWhy), (Whr, dWhr, mWhr), (Whv, dWhv, mWhv),
+              (Whe, dWhe, mWhe), (Wrh, dWrh, mWrh), (Wry, dWry, mWry), (bh, dbh, mbh), (by, dby, mby)]
+
 while t < T:
     # prepare inputs (we're sweeping from left to right in steps S long)
     for b in range(0, B):
@@ -594,8 +615,8 @@ while t < T:
     # sample from the model now and then
     if n > 0 and n % opt.report_interval == 0:
         # if log..
-        sample_ix = get(np.expand_dims(cprev[:, 0], axis=1), np.expand_dims(hprev[:, 0], axis=1),
-                           (mprev[:, :, 0]), np.expand_dims(rprev[:, 0], axis=1), inputs[0], opt.sample_length)
+        sample_ix = get(np.expand_dims(C[:, 0], axis=1), np.expand_dims(hprev[:, 0], axis=1),
+                        (M[:, :, 0]), np.expand_dims(R[:, 0], axis=1), inputs[0], opt.sample_length)
         txt = ''.join(ix_to_char[ix] for ix in sample_ix)
         print('----\n %s \n----' % (txt,))
         entry = '%s\n' % txt
@@ -603,18 +624,18 @@ while t < T:
             myfile.write(entry)
 
         if GC:
-            gradCheck(targets, cprev, hprev, mprev, rprev)
+            gradCheck(C, hprev, M, R)
 
 
     # forward S characters through the net and fetch gradient
-    loss, dbh, dby, cprev, hprev = put(cprev, hprev, mprev, rprev)
+    loss, C, hprev = put(C, hprev, M, R)
 
     lossSum += loss    
 
     if n % opt.report_interval == 0 and n > 0:
         # if log..
         if plotting:
-           plot(mem)
+           plot(None) #TODO
         
         now = time.time()
         tdelta = now - last
@@ -625,21 +646,23 @@ while t < T:
         #lpc = lossMean / (S*B)
         #bpc = (smooth_loss * 0.999 + lossMean / (np.log(2) * B) * 0.001)/S
         bpc = lossMean / (np.log(2)*S*B)
-        cps = (B*opt.report_interval) / tdelta
+        cps = (S*B*opt.report_interval) / tdelta
         t = now - start
                
         with open(logname, "a") as myfile: myfile.write('{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, bpc))
 
         print('%2d: %.3f s, iter %d, %.4f BPC, %.2f char/s' % (v, t, n, bpc, cps))  # print progress
         #print('%2d: %.3f s, iter %d, %.4f loss, %.4f BPC, %.2f char/s' % (v, t, n, lpc, bpc, cps))  # print progress
-    
-    COMPONENTS = [(Wxh, dWxh, mWxh), (Whh, dWhh, mWhh), (Why, dWhy, mWhy), (Whr, dWhr, mWhr), (Whv, dWhv, mWhv),
-                  (Whe, dWhe, mWhe), (Wrh, dWrh, mWrh), (Wry, dWry, mWry), (bh, dbh, mbh), (by, dby, mby)]
+
     for param, dparam, mem in COMPONENTS:
         # perform parameter update with Adagrad
-        mem += dparam * dparam
-        param += -learning_rate * dparam / np.sqrt(mem + 1e-8)  # adagrad update
+        mem += dparam**2
+        param -= learning_rate * dparam / np.sqrt(mem + adagradStability)  # adagrad update
 
-    for b in range(0, B): p[b] += S  # move data pointer
-    
     n += 1  # iteration counter
+
+    # data pointer: forward
+    #dp = S
+    dp = max(S//2, 1) #nyquist overlap
+    for b in range(0, B): p[b] += dp
+
