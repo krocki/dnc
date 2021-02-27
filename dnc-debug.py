@@ -34,9 +34,9 @@ def normalize(V: array): return V / mag(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
-parser.add_argument('--batchsize', type=int, default=64, help='batch size')
-parser.add_argument('--hidden', type=int, default=64, help='hiddens')
-parser.add_argument('--seqlength', type=int, default=24, help='seqlength')
+parser.add_argument('--batchsize', type=int, default=16, help='batch size')
+parser.add_argument('--hidden', type=int, default=32, help='hiddens')
+parser.add_argument('--seqlength', type=int, default=16, help='seqlength')
 parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
 parser.add_argument('--gradcheck', action='store_const', const=True, default=False, help='run gradcheck?')
 parser.add_argument('--fp64', action='store_const', const=True, default=False, help='double precision?')
@@ -56,15 +56,16 @@ plotting = False
 
 val = np.float32 if opt.fp64 else np.float64
 
-clipGradients = 0 #set to positive value to enable
+clipGradients = 16 #set to positive value to enable
 
 learning_rate = \
-    0.1
+    0.05
+    #0.1
     #0.2
 
 # TODO check the size constraints with regard to HN
-MW:int = 8  # paper - W
-MN:int = 8  # paper - N
+MW:int = 4  # paper - W
+MN:int = 4  # paper - N
 MR:int = 1  # paper - R  TODO allow R>1
 
 # hyperparameters
@@ -137,8 +138,8 @@ with open(logname, "a") as myfile:
     myfile.write("\n#  ITER\t\tTIME\t\tTRAIN LOSS\n")
 
 
-#file = "/tmp/y.txt"
-file = 'alice29.txt'
+file = "/tmp/y.txt"
+#file = 'alice29.txt'
 #file = '/tmp/x.java'
 f = open(file, 'r')
 data = f.read()
@@ -153,7 +154,7 @@ char_to_ix: dict = {ch: i for i, ch in enumerate(chars)}
 ix_to_char: dict = {i: ch for i, ch in enumerate(chars)}
 
 # model parameters
-rngAmp:float = 0.01
+rngAmp:float = 0.02
 
 Wxh : array = np.random.randn(4 * N, vocab_size).astype(val) * rngAmp  # input to hidden
 Whh : array = np.random.randn(4 * N, N).astype(val) * rngAmp  # hidden to hidden
@@ -624,7 +625,7 @@ while t < T:
         #lpc = lossMean / (S*B)
         #bpc = (smooth_loss * 0.999 + lossMean / (np.log(2) * B) * 0.001)/S
         bpc = lossMean / (np.log(2)*S*B)
-        cps = (S*B*opt.report_interval) / tdelta
+        cps = (B*opt.report_interval) / tdelta
         t = now - start
                
         with open(logname, "a") as myfile: myfile.write('{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, bpc))
