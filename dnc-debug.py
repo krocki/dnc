@@ -6,12 +6,13 @@ import datetime
 import sys
 import time
 from random import uniform
-from typing import List
+from typing import List, Type, Any, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy import ndarray
 from scipy.special import expit as sigmoid
-from scipy.special import logsumexp
+#from scipy.special import logsumexp
 
 # from numba import jit,njit
 # from Cython.Includes.numpy import ndarray
@@ -20,11 +21,11 @@ from scipy.special import logsumexp
 # def _sigmoid(x): return 1.0 / (1.0 + np.exp(-x))
 
 
-array = np.ndarray
+array: Type[np.ndarray] = np.ndarray
 floatarray = list[float]
 listOfArrays = list[array]
 
-def dfun_key_simil(C, dsim): return np.dot(C.T, dsim)
+def dfun_key_simil(C: array, dsim): return np.dot(C.T, dsim)
 
 def mag(V: array): return np.sqrt(np.sum(V * V))
 
@@ -34,7 +35,7 @@ def normalize(V: array): return V / mag(V)
 ### parse args
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--fname', type=str, default=sys.argv[0] + '.log', help='log filename')
-parser.add_argument('--batchsize', type=int, default=16, help='batch size')
+parser.add_argument('--batchsize', type=int, default=32, help='batch size')
 parser.add_argument('--hidden', type=int, default=96, help='hiddens')
 parser.add_argument('--seqlength', type=int, default=32, help='seqlength')
 parser.add_argument('--timelimit', type=int, default=3600, help='time limit (s)')
@@ -138,8 +139,8 @@ with open(logname, "a") as myfile:
     myfile.write("\n#  ITER\t\tTIME\t\tTRAIN LOSS\n")
 
 
-file = "/tmp/y.txt"
-#file = 'alice29.txt'
+#file = "/tmp/y.txt"
+file = 'alice29.txt'
 #file = '/tmp/x.java'
 f = open(file, 'r')
 data = f.read()
@@ -297,9 +298,10 @@ def reverse(cs, hs, seed, memory: List[array], rs):
         dmem_erase_gate = -dmemory * m0 * mnr
         dmem_next = dmemory * (1 - np.reshape(memoryEraseT, (1, MW, B)) * mnr)
 
+        mrkt, mwkt = mem_read_key[t], mem_write_key[t]
         for b in range(0, B):
-            dmem_next[:, :, b] += np.dot(dmem_read_gate[:, :, b].T, mem_read_key[t][:, b, None].T) + np.dot(
-                dmem_write_gate[:, :, b].T, mem_write_key[t][:, b, None].T)
+            dmem_next[:, :, b] += np.dot(dmem_read_gate[:, :, b], mrkt[:, b, None]) + (
+                np.dot(dmem_write_gate[:, :, b], mwkt[:, b, None]))
 
             #  dmem_next[:,:,b] = dmem_next[:,:,b] * memory[t-1][:,:,b]
             #  dmem_next_sum = np.sum(dmem_next[:,:,b], axis=1, keepdims=1)
@@ -309,10 +311,10 @@ def reverse(cs, hs, seed, memory: List[array], rs):
         dmem_erase_gate = dmem_erase_gate * memoryEraseT * (1 - memoryEraseT)
 
         dmem_write_gate = np.reshape(dmem_write_gate, (MN, B))
-        dmem_read_gate = np.reshape(dmem_read_gate, (MN, B))
+        dmem_read_gate =  np.reshape(dmem_read_gate,  (MN, B))
 
         for b in range(0, B):
-            mt = m0[:, :, b].T
+            mt = m0[:, :, b]
             dmem_write_key[:, b, None] = np.dot(mt, dmem_write_gate[:, b, None])
             dmem_read_key [:, b, None] = np.dot(mt, dmem_read_gate [:, b, None])
 
@@ -375,56 +377,52 @@ def forward(cs, hs, seed, memory, rs):
         xsT.fill(0)  # encode in 1-of-k representation
         for b in range(0, B): xsT[:, b][inputs[t][b]] = 1
 
-        hs0, rs0 = hs[t - 1], rs[t - 1]
-
         # gates, linear part + previous read vector
-        gst = np.dot(Wxh, xsT) + np.dot(Whh, hs0) + bh + np.dot(Wrh, rs0)
+        gs[t] = gst = np.dot(Wxh, xsT) + np.dot(Whh, hs[t-1]) + bh + np.dot(Wrh, rs[t-1])
+
         hst, yst, cst = learnGST(gst, cs[t - 1], H)
-        gs[t] = gst
+        ys[t] = yst
         hs[t] = hst
         cs[t] = cst
 
         ##### external mem ########
-        mrkt = mem_read_key[t] = np.dot(Whr, hst)  # key used for content based read
+        mrkt = mem_read_key[t] =  np.dot(Whr, hst)  # key used for content based read
         mwkt = mem_write_key[t] = np.dot(Whw, hst)  # key used for content based read
 
-        m0 = memory[t - 1] if t > 0 else seed
 
         mwgt, mrgt = mem_write_gate[t], mem_read_gate[t]
 
-        mem_new_content[t] = np.dot(Whv, hst)
+        mnct = mem_new_content[t] = np.dot(Whv, hst)
 
+        m0: array = memory[t - 1] if t > 0 else seed
         normalizeKeys(m0, mrgt, mrkt, mwgt, mwkt, B)
 
         mem_erase_gate[t] = sigmoid(np.dot(Whe, hst))
         mem_write_gate[t] = softmax(mwgt)
-        mem_read_gate[t] = softmax(mrgt)
+        mem_read_gate[t]  = softmax(mrgt)
 
-        mt = m0 * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mwgt, (MN, 1, B))) + np.reshape(
-            mem_new_content[t], (1, MW, B)) * np.reshape(mwgt, (MN, 1, B))
+        memory[t] = mt = m0 * (1 - np.reshape(mem_erase_gate[t], (1, MW, B)) * np.reshape(mwgt, (MN, 1, B))) + np.reshape(
+            mnct, (1, MW, B)) * np.reshape(mwgt, (MN, 1, B))
 
-        memory[t] = mt
+        rs[t] = learnY(mt, mrgt, yst, Wry)
 
-        rst = learnY(mt, mrgt, yst, Wry)
+        #yste = np.exp(yst)
+        #psT = yste / np.sum(yste, axis=0) # probabilities for next chars
+        #psT = np.exp(yst - logsumexp(yst, axis=0))  # probabilities for next chars
 
-        psT = np.exp(yst - logsumexp(yst, axis=0))  # probabilities for next chars
-        # psT = np.exp(ys[t]) / np.sum(np.exp(ys[t]), axis=0) # probabilities for next chars
-
-        ys[t] = yst
-        ps[t] = psT
-        rs[t] = rst
+        psT = ps[t] = softmax(yst)
         loss = lossAccum(loss, psT, t)
     return loss
 
 
 ##@njit
-def learnY(m1, mrgt, yst, Wry):
+def learnY(m1: array, mrgt: array, yst: array, Wry: array):
     rst = np.sum(m1 * np.reshape(mrgt, (MN, 1, B)), axis=0)
     yst += np.dot(Wry, rst) - np.max(yst, axis=0)  # add read vector to output
     return rst
 
 
-def lossAccum(loss, psT, t):
+def lossAccum(loss: float, psT: array, t: int):
     for b in range(0, B):
         psTB = psT[targets[t, b], b]
         if psTB > 0: loss += -np.log(psTB)  # softmax (cross-entropy loss)
@@ -441,7 +439,7 @@ def normalizeKeys(m0, mrgt, mrkt, mwgt, mwkt, B):
         # s = np.sum(np.exp(memory[t-1][:,:,b]), axis=1, keepdims=1)
         # memory[t-1][:,:,b] = np.exp(memory[t-1][:,:,b])/s
 
-        bb = m0[:, :, b]
+        bb: array = m0[:, :, b]
         mwgt[:, b, None] = np.dot(bb, mwkt[:, b, None])
         mrgt[:, b, None] = np.dot(bb, mrkt[:, b, None])
 
@@ -465,14 +463,14 @@ def learnCST(cs0, gst, N):
 
 
 #@njit
-def learnGST0(gst, N):
+def learnGST0(gst: array, N: int):
     gst[0:3 * N, :] = sigmoid(gst[0:3 * N, :])  # i, o, f gates
     gst[3 * N:4 * N, :] = np.tanh(gst[3 * N:4 * N, :])  # c gate
 
 #@njit
-def softmax(gate):
-    gate = np.exp(gate)
-    return gate / np.sum(gate, axis=0)
+def softmax(x: array) -> array:
+    ex = np.exp(x)
+    return ex / np.sum(ex, axis=0)
 
 
 # prediction/sampling
@@ -485,18 +483,18 @@ def get(c, h, m, r, seed_ix, n):
     x[seed_ix] = 1
     ixes = []
 
+
     for t in range(n):
-        g = np.dot(Wxh, x) + np.dot(Whh, h) + np.dot(Wrh, r) + bh
+        g: array = np.dot(Wxh, x) + np.dot(Whh, h) + np.dot(Wrh, r) + bh
+
         g[0:3 * H, :] = sigmoid(g[0:3 * H, :])
-        g[3 * H:4 * H, :] = np.tanh(g[3 * H:4 * H, :])
-        c = g[3 * H:4 * H, :] * g[0:H, :] + g[2 * H:3 * H, :] * c
+        g34 = g[3 * H:4 * H, :] = np.tanh(g[3 * H:4 * H, :])
+        c = g34 * g[0:H, :] + g[2 * H:3 * H, :] * c
         c = np.tanh(c)
         h = g[H:2 * H, :] * c
         mem_new_content = np.dot(Whv, h)
-        # mem_write_gate = sigmoid(np.dot(Whw, h))
-        # mem_read_gate = sigmoid(np.dot(Whr, h))
-        mem_write_key = np.dot(Whw, h)
-        mem_read_key = np.dot(Whr, h)
+        mem_write_key   = np.dot(Whw, h)
+        mem_read_key    = np.dot(Whr, h)
 
         mem_write_gate = np.exp(mem_write_key)
         mem_write_gate = mem_write_gate / np.sum(mem_write_gate, axis=0)
