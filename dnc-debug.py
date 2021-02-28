@@ -74,6 +74,7 @@ MR:int = 1  # paper - R  TODO allow R>1
 # hyperparameters
 H:int = opt.hidden  # size of hidden layer of neurons
 S:int = opt.seqlength  # number of steps to unroll the RNN for
+Soverlap:float = 2.0/3  #nyquist overlap
 B:int = opt.batchsize
 
 # gradient checking
@@ -156,7 +157,7 @@ ix_to_char: dict = {i: ch for i, ch in enumerate(chars)}
 
 
 rngAmp:float = \
-    0.0001
+    0.00001
     #0.001
 
 Wxh : array = np.random.randn(4 * H, V).astype(val) * rngAmp  #       input -> hidden
@@ -255,10 +256,11 @@ def reverse(cs, hs, seed, memory: List[array], rs):
     dmem_next = np.zeros_like(seed)
     drs_next = np.zeros_like(rs[0])
     dg = np.zeros_like(gs[0])
-    W_ones = np.ones((MW, 1), dtype=val)
+    W_ones_T = np.ones((MW, 1), dtype=val).T
     for t in reversed(range(S)):
-        dy = np.copy(ps[t])
-        tt = targets[t]
+        dy: array = np.copy(ps[t])
+
+        tt: array = targets[t]
         for b in range(0, B):
             dy[tt[b], b] -= 1  # backprop into y
 
@@ -273,29 +275,22 @@ def reverse(cs, hs, seed, memory: List[array], rs):
         rgt = mem_read_gate[t]
         dmemory = np.reshape(drs, (1, MW, B)) * np.reshape(rgt, (MN, 1, B)) + dmem_next
 
-        ones_t = W_ones.T
 
         m0 = memory[t - 1] if t > 0 else seed
 
         memoryEraseT = mem_erase_gate[t]
 
-        dmem_write_gate = np.dot(ones_t,
-                                 dmemory * (mem_new_content[t] - memoryEraseT * m0))  # iface gates
-
-        dmem_read_gate =  np.dot(ones_t, drs * memory[t])
+        dmem_write_gate = np.dot(W_ones_T, dmemory * (mem_new_content[t] - memoryEraseT * m0))  # iface gates
+        dmem_read_gate =  np.dot(W_ones_T, drs * memory[t])
 
         # propagate back through softmax
         wgt = mem_write_gate[t]
 
         dmem_write_gate = wgt * (dmem_write_gate - np.sum(dmem_write_gate, axis=1))
-
-        dmem_read_gate *= rgt
-        dmem_read_gate -= rgt * np.sum(dmem_read_gate, axis=1)
+        dmem_read_gate =  rgt * (dmem_read_gate -  np.sum(dmem_read_gate,  axis=1))
 
         mnr = np.reshape(wgt, (MN, 1, B))
-        dmem_new_content = dmemory * mnr
 
-        dmem_erase_gate = -dmemory * m0 * mnr
         dmem_next = dmemory * (1 - np.reshape(memoryEraseT, (1, MW, B)) * mnr)
 
         mrkt, mwkt = mem_read_key[t], mem_write_key[t]
@@ -307,8 +302,8 @@ def reverse(cs, hs, seed, memory: List[array], rs):
             #  dmem_next_sum = np.sum(dmem_next[:,:,b], axis=1, keepdims=1)
             #  dmem_next[:,:,b] -= memory[t-1][:,:,b] * dmem_next_sum
 
-        #  dmem_read_key = dmem_read_gate
-        dmem_erase_gate = dmem_erase_gate * memoryEraseT * (1 - memoryEraseT)
+
+        dmem_erase_gate = (-dmemory * m0 * mnr) * memoryEraseT * (1 - memoryEraseT)
 
         dmem_write_gate = np.reshape(dmem_write_gate, (MN, B))
         dmem_read_gate =  np.reshape(dmem_read_gate,  (MN, B))
@@ -331,14 +326,15 @@ def reverse(cs, hs, seed, memory: List[array], rs):
         dMemReadKey = np.reshape(dmem_read_key, (MW, B))
         dWhr += np.dot(dMemReadKey, hst)
         dWhe += np.dot(np.sum(dmem_erase_gate,  axis=0), hst)
+
+        dmem_new_content = dmemory * mnr
         dWhv += np.dot(np.sum(dmem_new_content, axis=0), hst)
         ########
 
         dby += np.expand_dims(np.sum(dy, axis=1), axis=1)
 
         # backprop into h
-        dh: float = np.dot(Why.T, dy) + dhnext + np.dot(Whw.T, dmemWriteKey) + np.dot(Whr.T,
-                                                                                      dMemReadKey) + np.dot(
+        dh: float = np.dot(Why.T, dy) + dhnext + np.dot(Whw.T, dmemWriteKey) + np.dot(Whr.T, dMemReadKey) + np.dot(
             Whe.T, np.sum(dmem_erase_gate, axis=0)) + np.dot(Whv.T, np.sum(dmem_new_content, axis=0))
 
         # external end ###
@@ -362,23 +358,25 @@ def reverse(cs, hs, seed, memory: List[array], rs):
         dg[3 * H:4 * H, :] = dg[3 * H:4 * H, :] * (1 - gst34 * gst34)  # backprop through tanh
 
         dbh  += np.expand_dims(np.sum(dg, axis=1), axis=1)
+
         dWxh += np.dot(dg, xs[t].T)
         dWhh += np.dot(dg, hs[t - 1].T)
         dWrh += np.dot(dg, rs[t - 1].T)
-        dhnext: float = np.dot(Whh.T, dg)
-        drs_next: float = np.dot(Wrh.T, dg)
+        dhnext = np.dot(Whh.T, dg)
+        drs_next = np.dot(Wrh.T, dg)
         dcnext = dc * gst[2 * H:3 * H, :]
 
 
 def forward(cs, hs, seed, memory, rs):
     loss : float = 0
     for t in range(S):
-        xsT = xs[t]
-        xsT.fill(0)  # encode in 1-of-k representation
-        for b in range(0, B): xsT[:, b][inputs[t][b]] = 1
+        xst = xs[t]
+        xst.fill(0)  # encode in 1-of-k representation
+        ist = inputs[t]
+        for b in range(0, B): xst[:, b][ist[b]] = 1
 
         # gates, linear part + previous read vector
-        gs[t] = gst = np.dot(Wxh, xsT) + np.dot(Whh, hs[t-1]) + bh + np.dot(Wrh, rs[t-1])
+        gs[t] = gst = np.dot(Wxh, xst) + np.dot(Whh, hs[t-1]) + bh + np.dot(Wrh, rs[t-1])
 
         hst, yst, cst = learnGST(gst, cs[t - 1], H)
         ys[t] = yst
@@ -406,12 +404,8 @@ def forward(cs, hs, seed, memory, rs):
 
         rs[t] = learnY(mt, mrgt, yst, Wry)
 
-        #yste = np.exp(yst)
-        #psT = yste / np.sum(yste, axis=0) # probabilities for next chars
-        #psT = np.exp(yst - logsumexp(yst, axis=0))  # probabilities for next chars
-
         psT = ps[t] = softmax(yst)
-        loss = lossAccum(loss, psT, t)
+        loss += lossAccum(psT, t)
     return loss
 
 
@@ -422,7 +416,8 @@ def learnY(m1: array, mrgt: array, yst: array, Wry: array):
     return rst
 
 
-def lossAccum(loss: float, psT: array, t: int):
+def lossAccum(psT: array, t: int):
+    loss: float = 0
     for b in range(0, B):
         psTB = psT[targets[t, b], b]
         if psTB > 0: loss += -np.log(psTB)  # softmax (cross-entropy loss)
@@ -458,8 +453,7 @@ def learnGST(gst, cs0, N):
 #@njit
 def learnCST(cs0, gst, N):
     cst = gst[3 * N:4 * N, :] * gst[0:N, :] + gst[2 * N:3 * N, :] * cs0
-    cst = np.tanh(cst)  # mem cell - nonlinearity
-    return cst
+    return np.tanh(cst)  # mem cell - nonlinearity
 
 
 #@njit
@@ -479,7 +473,7 @@ def get(c, h, m, r, seed_ix, n):
     sample a sequence of integers from the model
     h is memory state, seed_ix is seed letter for first time step
     """
-    x = np.zeros((V, 1), dtype=val)
+    x: array = np.zeros((V, 1), dtype=val)
     x[seed_ix] = 1
     ixes = []
 
@@ -490,21 +484,22 @@ def get(c, h, m, r, seed_ix, n):
         g[0:3 * H, :] = sigmoid(g[0:3 * H, :])
         g34 = g[3 * H:4 * H, :] = np.tanh(g[3 * H:4 * H, :])
         c = g34 * g[0:H, :] + g[2 * H:3 * H, :] * c
-        c = np.tanh(c)
-        h = g[H:2 * H, :] * c
-        mem_new_content = np.dot(Whv, h)
-        mem_write_key   = np.dot(Whw, h)
-        mem_read_key    = np.dot(Whr, h)
+        h = g[H:2 * H, :] * np.tanh(c)
 
+        mem_new_content = np.dot(Whv, h)
+
+        mem_write_key   = np.dot(Whw, h)
         mem_write_gate = np.exp(mem_write_key)
         mem_write_gate = mem_write_gate / np.sum(mem_write_gate, axis=0)
 
+        mem_read_key    = np.dot(Whr, h)
         mem_read_gate = np.exp(mem_read_key)
         mem_read_gate = mem_read_gate / np.sum(mem_read_gate, axis=0)
 
-        mem_erase_gate = sigmoid(np.dot(Whe, h))
 
-        m = m * (1 - np.reshape(mem_erase_gate, (1, MW)) * np.reshape(mem_write_gate, (MN, 1))) + np.reshape(mem_new_content, (1, MW)) * np.reshape(mem_write_gate, (MN, 1))
+        mwmn = np.reshape(mem_write_gate, (MN, 1))
+        mem_erase_gate = sigmoid(np.dot(Whe, h))
+        m = m * (1 - np.reshape(mem_erase_gate, (1, MW)) * mwmn) + np.reshape(mem_new_content, (1, MW)) * mwmn
 
         #m = m * (1 - np.reshape(mem_erase_gate, (1, MW)) * np.reshape(mem_write_gate, (MN, 1)))  # 1
         ##  m = m * (1-mem_erase_gate) # 2
@@ -515,14 +510,18 @@ def get(c, h, m, r, seed_ix, n):
         y = np.dot(Why, h) + by + np.dot(Wry, r)
         
         #softmax decision?
-        ye = np.exp(y)
-        yn = ye / np.sum(ye)
-        ix = np.random.choice(range(V), p=yn.ravel())
-        
+        ix = decide(y)
         ixes.append(ix)        
         x.fill(0) #x = np.zeros((vocab_size, 1), dtype=val)
         x[ix] = 1
     return ixes
+
+
+def decide(y):
+    ye = np.exp(y)
+    yn = ye / np.sum(ye)
+    ix = np.random.choice(range(V), p=yn.ravel())
+    return ix
 
 
 def expSumNorm(mem_read_key):
@@ -644,7 +643,7 @@ while t < T:
         #lpc = lossMean / (S*B)
         #bpc = (smooth_loss * 0.999 + lossMean / (np.log(2) * B) * 0.001)/S
         bpc = lossMean / (np.log(2)*S*B)
-        cps = (S*B*opt.report_interval) / tdelta
+        cps = ((S*(1-Soverlap))*B*opt.report_interval) / tdelta
         t = now - start
                
         with open(logname, "a") as myfile: myfile.write('{:5}\t\t{:3f}\t{:3f}\n'.format(n, t, bpc))
@@ -661,6 +660,6 @@ while t < T:
 
     # data pointer: forward
     #dp = S
-    dp = max(S//2, 1) #nyquist overlap
+    dp = max(int(S*(1-Soverlap)), 1)
     for b in range(0, B): p[b] += dp
 
