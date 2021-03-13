@@ -3,7 +3,7 @@ Implementation of Differentiable Neural Computer https://www.nature.com/articles
 
 ### quick start
 ```
-python dnc-debug.py
+OMP_WAIT_POLICY=PASSIVE OMP_NUM_THREADS=8   python dnc-debug.py
 ```
 
 These versions are cleaned up.
@@ -118,3 +118,22 @@ bh:             n = [-1.363950e+00, 9.144058e-01]       min 2.473756e-10, max 5.
 by:             n = [-5.594528e-02, 5.814085e-01]       min 1.604237e-09, max 1.017124e-05
                 a = [-5.594528e-02, 5.814085e-01]       mean 1.026833e-06 # 10/10
 ```
+
+# Links
+https://github.com/JoergFranke/ADNC
+https://github.com/RobertCsordas/dnc
+https://github.com/SeemonJ/reinvent-dnc
+https://github.com/bhpfelix/DNC-NumPy
+https://github.com/llealgt/DNC
+https://github.com/yashbonde/Differentiable-Neural-Computer
+https://github.com/vpegasus/dnc
+https://github.com/SiliconSloth/ADNC
+https://github.com/ivannz/krocki_dnc
+https://github.com/pchlenski/dnc-regex
+https://github.com/ksluck/sl-dnhc
+https://github.com/jaspock/dnc
+https://github.com/brandontrabucco/program-hdc
+https://arxiv.org/pdf/1505.00521.pdf
+file:///home/me/Downloads/ntm_rl.pdf
+
+

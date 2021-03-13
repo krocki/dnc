@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # author: kmrocki
-# based on the original code by A.Karpathy (char-rnn)
+# based on the original code by A.Karpathy (char-rnn) https://gist.github.com/karpathy/d4dee566867f8291f086
 
 from __future__ import print_function
 import numpy as np
@@ -94,6 +94,24 @@ def train(inputs, targets, hprev):
             np.clip(dparam, -5, 5, out=dparam) # clip to mitigate exploding gradients
   return loss, dWxh, dWhh, dWhy, dbh, dby, hs[len(inputs)-1]
 
+def sample(h, seed_ix, n):
+  """ 
+  sample a sequence of integers from the model 
+  h is memory state, seed_ix is seed letter for first time step
+  """
+  x = np.zeros((vocab_size, 1))
+  x[seed_ix] = 1
+  ixes = []
+  for t in xrange(n):
+    h = np.tanh(np.dot(Wxh, x) + np.dot(Whh, h) + bh)
+    y = np.dot(Why, h) + by
+    p = np.exp(y) / np.sum(np.exp(y))
+    ix = np.random.choice(range(vocab_size), p=p.ravel())
+    x = np.zeros((vocab_size, 1))
+    x[ix] = 1
+    ixes.append(ix)
+  return ixes
+  
 n = 0
 p = np.random.randint(len(data)-1-S,size=(B)).tolist()
 inputs = np.zeros((S,B), dtype=int)

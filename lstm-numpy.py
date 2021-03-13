@@ -21,6 +21,8 @@ parser.add_argument('--batchsize', type=int, default = 16, help='batch size')
 parser.add_argument('--hidden', type=int, default = 32, help='hiddens')
 parser.add_argument('--seqlength', type=int, default = 25, help='seqlength')
 
+T = 10 # max time
+
 opt = parser.parse_args()
 B = opt.batchsize # batch size
 S = opt.seqlength # unrolling in time steps
@@ -134,7 +136,6 @@ start = time.time()
 
 t = time.time()-start
 last=start
-T = 1000 # max time
 while t < T:
   # prepare inputs (we're sweeping from left to right in steps S long)
   for b in range(0,B):
