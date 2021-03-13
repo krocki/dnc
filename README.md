@@ -134,6 +134,4 @@ https://github.com/ksluck/sl-dnhc
 https://github.com/jaspock/dnc
 https://github.com/brandontrabucco/program-hdc
 https://arxiv.org/pdf/1505.00521.pdf
-file:///home/me/Downloads/ntm_rl.pdf
-
 
